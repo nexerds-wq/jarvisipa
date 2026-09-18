@@ -1,0 +1,50 @@
+name: Build Jarvis Glasses V2 IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build unsigned iPhone app
+        run: |
+          set -e
+          xcodebuild \
+            -project JarvisGlasses.xcodeproj \
+            -scheme JarvisGlasses \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -e
+          rm -rf Payload
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/JarvisGlasses.app Payload/
+          /usr/bin/zip -qry JarvisGlasses-V2-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: JarvisGlasses-V2-unsigned-ipa
+          path: JarvisGlasses-V2-unsigned.ipa
