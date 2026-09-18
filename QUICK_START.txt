@@ -1,0 +1,12 @@
+JARVIS GLASSES V2 - QUICK START
+
+1. Upload this whole folder to GitHub.
+2. Actions -> Build Jarvis Glasses V2 IPA -> Run workflow.
+3. Download JarvisGlasses-V2-unsigned-ipa.
+4. Extract the IPA and install with Sideloadly.
+5. Open app -> Scan -> select M02S -> Test Jarvis.
+6. Turn on "Listen for Hey Jarvis" and allow Mic + Speech.
+7. Say "Hey Jarvis".
+8. Then lock the phone and test again.
+
+IMPORTANT: Do not swipe-force-close Jarvis Glasses if you want background/locked listening.
