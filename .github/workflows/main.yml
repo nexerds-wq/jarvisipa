@@ -3,7 +3,7 @@ name: Build Jarvis Glasses V2 IPA
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "feature/cozmo-ollama" ]
 
 jobs:
   build:
