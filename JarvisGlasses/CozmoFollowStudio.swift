@@ -72,6 +72,9 @@ struct CozmoFollowStudio: View {
         }
         .navigationTitle("Cozmo Follow Studio")
         .onAppear(perform: load)
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+            if running && !busy { send("keepalive") }
+        }
     }
     private func save() {
         if let data = try? JSONEncoder().encode(settings) {
