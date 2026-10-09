@@ -56,14 +56,14 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             cmd = payload["command"]
             settings = payload.get("settings", {})
-            if cmd not in ("configure", "start", "stop"): raise ValueError("Unknown command")
+            if cmd not in ("configure", "start", "stop", "keepalive"): raise ValueError("Unknown command")
             if cmd == "start" and settings.get("target") != "Shoes":
                 raise ValueError("Only experimental Shoes mode is implemented")
             if cmd == "start" and not settings.get("colors"):
                 raise ValueError("Select at least one color")
             with lock:
                 if cmd != "stop": state["settings"] = settings
-                state["active"] = cmd == "start" if cmd != "configure" else state["active"]
+                state["active"] = (cmd == "start") if cmd in ("start", "stop") else state["active"]
                 state["updated"] = time.monotonic()
             self.send_response(200); self.end_headers(); self.wfile.write(b'{"ok":true}')
         except (ValueError, KeyError, TypeError) as exc:
