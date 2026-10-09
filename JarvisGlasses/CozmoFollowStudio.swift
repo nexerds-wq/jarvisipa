@@ -8,6 +8,7 @@ struct CozmoFollowSettings: Codable {
     var stopDistance = 35.0
     var sensitivity = 50.0
     var server = "http://192.168.1.100:8765"
+    var token = ""
 }
 struct CozmoFollowStudio: View {
     @State private var settings = CozmoFollowSettings()
@@ -52,6 +53,7 @@ struct CozmoFollowStudio: View {
                 TextField("PC bridge address", text: $settings.server)
                     .textInputAutocapitalization(.never).keyboardType(.URL)
                     .autocorrectionDisabled()
+                SecureField("Bridge access token", text: $settings.token)
                 Text(message).font(.caption)
                 Button("Save settings") { save(); message = "Saved on iPhone" }
                 Button("Send settings to PC") { send("configure") }
@@ -94,6 +96,7 @@ struct CozmoFollowStudio: View {
         request.httpMethod = "POST"
         request.timeoutInterval = 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(settings.token, forHTTPHeaderField: "X-Cozmo-Token")
         let payload = Command(command: command, settings: settings)
         request.httpBody = try? JSONEncoder().encode(payload)
         URLSession.shared.dataTask(with: request) { data, response, error in
