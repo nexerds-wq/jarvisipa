@@ -9,6 +9,7 @@ struct ContentView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     header
+                    NavigationLink("Cozmo Phone Beacon") { CozmoPhoneView() }
                     connectionCard
                     wakeWordCard
                     devicesCard
