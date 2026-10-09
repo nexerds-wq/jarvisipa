@@ -23,6 +23,10 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
 
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Connect to your Cozmo controller on your local network.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsLocalNetworking</key><true/></dict>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Jarvis Glasses uses Bluetooth to stay connected to your M02S glasses and trigger the AI listening mode.</string>
     <key>NSMicrophoneUsageDescription</key>
