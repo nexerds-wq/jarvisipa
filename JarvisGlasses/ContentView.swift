@@ -12,6 +12,7 @@ struct ContentView: View {
                     connectionCard
                     wakeWordCard
                     devicesCard
+                    solosLinkCard
                     notesCard
                 }
                 .padding()
@@ -135,6 +136,27 @@ struct ContentView: View {
                     Divider()
                 }
             }
+        }
+        .cardStyle()
+    }
+
+    private var solosLinkCard: some View {
+        NavigationLink {
+            SolosHUDView()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "eye")
+                    .font(.title2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Solos display + Jarvis")
+                        .font(.headline)
+                    Text("Preview your HUD, test direct Bluetooth, and speak through paired glasses.")
+                        .font(.caption)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+            }
+            .foregroundStyle(.primary)
         }
         .cardStyle()
     }
