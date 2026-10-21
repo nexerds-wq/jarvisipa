@@ -22,6 +22,14 @@ jobs:
       - name: Install dependencies
         working-directory: upstream/solos_hud
         run: flutter pub get
+      - name: Analyze Flutter and Dart code
+        working-directory: upstream/solos_hud
+        continue-on-error: true
+        run: flutter analyze
+      - name: Run Flutter unit tests
+        working-directory: upstream/solos_hud
+        continue-on-error: true
+        run: flutter test
       - name: Add iOS microphone and speech recognition permissions
         working-directory: upstream/solos_hud
         run: |
