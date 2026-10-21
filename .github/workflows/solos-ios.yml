@@ -1,50 +1,38 @@
-name: Replace Jarvis with Solos HUD and build iOS IPA
+name: Build Original Solos HUD iOS IPA
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  sync-and-build:
+  build-ios:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Download original Solos HUD source
+        uses: actions/checkout@v4
         with:
-          persist-credentials: true
-      - name: Download original Solos HUD project
-        run: |
-          git clone --depth 1 https://github.com/StudentBroken/solos-hud.git /tmp/solos-upstream
-          test -f /tmp/solos-upstream/solos_hud/pubspec.yaml
-          test -d /tmp/solos-upstream/solos_hud/ios
-      - name: Replace old Jarvis files with Solos HUD
-        run: |
-          mkdir -p /tmp/solos-workflows
-          cp .github/workflows/solos-ios.yml /tmp/solos-workflows/solos-ios.yml
-          rsync -a --delete --exclude='.git/' --exclude='.github/' /tmp/solos-upstream/solos_hud/ ./
-          rm -rf .github
-          mkdir -p .github/workflows
-          cp /tmp/solos-workflows/solos-ios.yml .github/workflows/solos-ios.yml
-          git add -A
-          if ! git diff --cached --quiet; then
-            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Replace old Jarvis project with original Solos HUD Flutter app'
-            git push origin HEAD:main
-          fi
-      - uses: subosito/flutter-action@v2
+          repository: StudentBroken/solos-hud
+          path: upstream
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
-      - name: Install Flutter dependencies
+      - name: Install dependencies
+        working-directory: upstream/solos_hud
         run: flutter pub get
       - name: Build unsigned iOS app
+        working-directory: upstream/solos_hud
         run: flutter build ios --release --no-codesign
-      - name: Package unsigned IPA
+      - name: Package IPA
+        working-directory: upstream/solos_hud
         run: |
           mkdir -p Payload
           cp -R build/ios/iphoneos/Runner.app Payload/
           zip -qry SolosHUD-unsigned.ipa Payload
-      - uses: actions/upload-artifact@v4
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
         with:
           name: SolosHUD-unsigned-IPA
-          path: SolosHUD-unsigned.ipa
+          path: upstream/solos_hud/SolosHUD-unsigned.ipa
