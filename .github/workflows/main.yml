@@ -1,50 +1,62 @@
-name: Build Jarvis Glasses V2 IPA
+name: Build Solos HUD iOS IPA (unsigned)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "main", "master" ]
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    runs-on: macos-latest
+  ios:
+    name: Build iOS on macOS
+    runs-on: macos-15
+    timeout-minutes: 60
+
     steps:
-      - name: Checkout
+      - name: Check out Solos HUD source
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
 
-      - name: Generate Xcode project
-        run: xcodegen generate
-
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build unsigned iPhone app
+      - name: Show build tool versions
         run: |
-          set -e
-          xcodebuild \
-            -project JarvisGlasses.xcodeproj \
-            -scheme JarvisGlasses \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build
+          flutter --version
+          xcodebuild -version
+          pod --version
 
-      - name: Package unsigned IPA
+      - name: Get Flutter packages
+        working-directory: solos_hud
+        run: flutter pub get
+
+      - name: Add missing iOS speech permission descriptions
+        working-directory: solos_hud
         run: |
-          set -e
-          rm -rf Payload
-          mkdir Payload
-          cp -R build/Build/Products/Release-iphoneos/JarvisGlasses.app Payload/
-          /usr/bin/zip -qry JarvisGlasses-V2-unsigned.ipa Payload
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Solos HUD uses your microphone when you use voice commands." ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string Solos HUD uses speech recognition when you use voice commands." ios/Runner/Info.plist
+          plutil -lint ios/Runner/Info.plist
 
-      - name: Upload IPA
+      - name: Compile the actual iPhone app (no signing)
+        working-directory: solos_hud
+        run: flutter build ios --release --no-codesign
+
+      - name: Package the built Runner.app into an IPA
+        run: |
+          set -euo pipefail
+          test -d solos_hud/build/ios/iphoneos/Runner.app
+          mkdir -p "$RUNNER_TEMP/solos-ipa/Payload"
+          ditto solos_hud/build/ios/iphoneos/Runner.app "$RUNNER_TEMP/solos-ipa/Payload/Runner.app"
+          (cd "$RUNNER_TEMP/solos-ipa" && zip -qry "$GITHUB_WORKSPACE/SolosHUD-unsigned.ipa" Payload)
+          unzip -t SolosHUD-unsigned.ipa >/dev/null
+          ls -lh SolosHUD-unsigned.ipa
+
+      - name: Upload downloadable unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: JarvisGlasses-V2-unsigned-ipa
-          path: JarvisGlasses-V2-unsigned.ipa
+          name: SolosHUD-iOS-unsigned
+          path: SolosHUD-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
