@@ -277,6 +277,13 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     }
                 }
             }
+            // Live time/date never calls Foundation Models (or a remote LLM).
+            // This must run before the AI availability check so the phone can
+            // answer accurately even while Apple Intelligence is unavailable.
+            if let clockAnswer = JarvisLiveClock.answer(for: trimmed) {
+                self.deliverJarvisAnswer(clockAnswer, status:"Answered from iPhone clock (LIVE)")
+                return
+            }
             if #available(iOS 26.0, *) {
                 guard SystemLanguageModel.default.isAvailable else {
                     self.aiStatus = "Apple Intelligence on-device model is unavailable. Enable Apple Intelligence and download its model in Settings."
@@ -294,13 +301,15 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     let prompt = cleaned.isEmpty ? trimmed : cleaned
                     var response: String = ""
                     var answeredOnline = false
+                    let systemInstructions = "Answer clearly in one or two short sentences. " +
+                        JarvisLiveClock.modelTimeContext()
                     do {
-                        let session = LanguageModelSession(instructions: "Answer clearly in one or two short sentences.")
+                        let session = LanguageModelSession(instructions: systemInstructions)
                         response = try await session.respond(to: prompt).content
                     } catch let firstError {
                         self.aiStatus = "Apple AI generation failed; checking a fresh session..."
                         do {
-                            let retry = LanguageModelSession()
+                            let retry = LanguageModelSession(instructions: systemInstructions)
                             response = try await retry.respond(to: prompt).content
                         } catch let secondError {
                             if UserDefaults.standard.bool(forKey: "jarvisWikipediaFallback") {
@@ -333,48 +342,9 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                             NSLocalizedDescriptionKey:"The answer was empty. Try a shorter question."
                         ])
                     }
-                    self.aiAnswer = response
-                    self.aiStatus = answeredOnline
+                    self.deliverJarvisAnswer(response, status: answeredOnline
                         ? "Answered from Wikipedia (ONLINE factual lookup)"
-                        : "Answered locally with Apple Intelligence"
-                    // The dedicated OLED lens renderer displays complete answer pages.
-                    // Avoid a competing raw HUD packet that can overwrite them.
-                    if UserDefaults.standard.object(forKey: "jarvisSpeakAnswers") as? Bool ?? true {
-                        // Full-duplex voice processing lets the mic stay open
-                        // during speech. iOS voiceChat enables system acoustic echo
-                        // cancellation where the selected audio route supports it.
-                        let bargeIn = UserDefaults.standard.bool(forKey:"jarvisLockScreenWake")
-                        if !bargeIn {
-                            let shouldResume = self.continuousWakeWanted
-                            self.stopListening()
-                            self.continuousWakeWanted = shouldResume
-                        }
-                        do {
-                            let audio = AVAudioSession.sharedInstance()
-                            if bargeIn {
-                                try audio.setCategory(.playAndRecord, mode:.voiceChat,
-                                                      options:[.defaultToSpeaker,.allowBluetooth,.mixWithOthers])
-                            } else {
-                                try audio.setCategory(.playback, mode:.spokenAudio,
-                                                      options:[.duckOthers,.allowBluetoothA2DP])
-                            }
-                            try audio.setActive(true)
-                            self.voiceStatus = bargeIn ? "Speaking and listening for Hey Jarvis" : "Speaking Jarvis answer"
-                        } catch {
-                            self.voiceStatus = "Audio route: \(error.localizedDescription)"
-                        }
-                        self.awaitingSpeechCompletion = true
-                        self.speechStartedAt = Date()
-                        self.accessory.speak(response)
-                        if bargeIn && self.continuousWakeWanted {
-                            // The previous SFSpeechRecognizer task was stopped
-                            // on submission. Start a fresh wake detector now,
-                            // instead of relying on AVSpeechSynthesizer.didFinish.
-                            // iOS voiceChat handles acoustic echo cancellation
-                            // on supported audio routes.
-                            self.scheduleWakeRearm(after:0.9)
-                        }
-                    }
+                        : "Answered locally with Apple Intelligence")
                 } catch {
                     self.aiStatus = "On-device JARVIS error: \(error.localizedDescription)"
                     self.aiAnswer = self.aiStatus
@@ -382,6 +352,50 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             }
         }
     }
+    // Shared for local clock, Apple AI and online factual answers.
+    // All response paths use the same spoken audio and real glasses HUD
+    // publication events, and preserve continuous microphone auto-rearm.
+    private func deliverJarvisAnswer(_ response: String, status: String) {
+        aiAnswer = response
+        aiStatus = status
+    if UserDefaults.standard.object(forKey: "jarvisSpeakAnswers") as? Bool ?? true {
+        // Full-duplex voice processing lets the mic stay open
+        // during speech. iOS voiceChat enables system acoustic echo
+        // cancellation where the selected audio route supports it.
+        let bargeIn = UserDefaults.standard.bool(forKey:"jarvisLockScreenWake")
+        if !bargeIn {
+            let shouldResume = self.continuousWakeWanted
+            self.stopListening()
+            self.continuousWakeWanted = shouldResume
+        }
+        do {
+            let audio = AVAudioSession.sharedInstance()
+            if bargeIn {
+                try audio.setCategory(.playAndRecord, mode:.voiceChat,
+                                      options:[.defaultToSpeaker,.allowBluetooth,.mixWithOthers])
+            } else {
+                try audio.setCategory(.playback, mode:.spokenAudio,
+                                      options:[.duckOthers,.allowBluetoothA2DP])
+            }
+            try audio.setActive(true)
+            self.voiceStatus = bargeIn ? "Speaking and listening for Hey Jarvis" : "Speaking Jarvis answer"
+        } catch {
+            self.voiceStatus = "Audio route: \(error.localizedDescription)"
+        }
+        self.awaitingSpeechCompletion = true
+        self.speechStartedAt = Date()
+        self.accessory.speak(response)
+        if bargeIn && self.continuousWakeWanted {
+            // The previous SFSpeechRecognizer task was stopped
+            // on submission. Start a fresh wake detector now,
+            // instead of relying on AVSpeechSynthesizer.didFinish.
+            // iOS voiceChat handles acoustic echo cancellation
+            // on supported audio routes.
+            self.scheduleWakeRearm(after:0.9)
+        }
+    }
+    }
+
     // iOS 26 Foundation Models can report an unhelpful NSError (-1).
     // Preserve the typed error and underlying error codes for troubleshooting.
     private static func describeModelFailure(_ error: Error) -> String {
