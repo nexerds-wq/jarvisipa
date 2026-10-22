@@ -129,7 +129,7 @@ enum SolosProHUD {
             } else {
                 if !line.isEmpty { lines.append(line) }
                 if lines.count >= 5 {
-                    pages.append(lines.joined(separator:"\\n"))
+                    pages.append(lines.joined(separator:"\n"))
                     lines.removeAll()
                 }
                 // Extra-long words are shown with UIKit's word wrapping.
@@ -137,7 +137,7 @@ enum SolosProHUD {
             }
         }
         if !line.isEmpty { lines.append(line) }
-        if !lines.isEmpty { pages.append(lines.joined(separator:"\\n")) }
+        if !lines.isEmpty { pages.append(lines.joined(separator:"\n")) }
         return Array(pages.prefix(8))
     }
 
