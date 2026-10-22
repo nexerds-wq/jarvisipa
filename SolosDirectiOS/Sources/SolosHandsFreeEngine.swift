@@ -60,9 +60,9 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
     func nextMode() {
         guard Date().timeIntervalSince(lastSwitch) > 0.55 else { return }
         lastSwitch = Date()
-        mode = (mode + 1) % 5
-        let labels = ["DASHBOARD", "CAPTIONS", "TRANSLATOR", "JARVIS AI", "SETTINGS"]
-        status = "Mode \(mode + 1)/5: \(labels[mode])"
+        mode = (mode + 1) % 2
+        let labels = ["DAILY DASHBOARD", "VOICE NAVIGATION"]
+        status = "Mode \(mode + 1)/2: \(labels[mode])"
         recognizedButtonCount += 1
         onModeChange?(mode)
     }
