@@ -85,8 +85,12 @@ struct ShowJarvisMessageIntent: AppIntent {
         }
         UserDefaults.standard.set(String(sender.prefix(80)),forKey:"jarvisIncomingMessageSender")
         UserDefaults.standard.set(String(body.prefix(12_000)),forKey:"jarvisIncomingMessageBody")
+        // ID is stored last, after the sender and body, so the active app
+        // never sees an incomplete incoming message.
         UserDefaults.standard.set(UUID().uuidString,forKey:"jarvisIncomingMessageID")
-        return .result(dialog:IntentDialog("Message ready for the Solos Jarvis HUD."))
+        NotificationCenter.default.post(
+            name:Notification.Name("SolosJarvisIncomingMessage"),object:nil)
+        return .result(dialog:IntentDialog("Message sent to Jarvis. The glasses show it when iOS allows the app to run and the HUD is connected."))
     }
 }
 
