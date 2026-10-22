@@ -790,13 +790,13 @@ struct SolosDirectHome: View {
             Text(captions.status).font(.caption).foregroundStyle(.secondary)
             Text("MIC BUFFERS: \(captions.audioBuffers) • " + captions.recognizerMode)
                 .font(.caption2.monospaced()).foregroundStyle(.mint)
-            Toggle("ALLOW ONLINE SPEECH WHEN OFFLINE RECOGNITION IS UNAVAILABLE",isOn:$allowOnlineSpeech)
+            Toggle("ALLOW SYSTEM / ONLINE SPEECH RECOGNITION (OPTIONAL)",isOn:$allowOnlineSpeech)
                 .font(.caption2).tint(.mint)
                 .onChange(of: allowOnlineSpeech) { _, _ in
                     if handsFree.mode == 2 { beginCaptions(mode:2) }
                     if handsFree.mode == 3 { beginCaptions(mode:3) }
                 }
-            Text("Online speech sends microphone audio to Apple's recognition service when the on-device language pack is unavailable. Off by default.")
+            Text("Off = on-device speech only. On = allow Apple's online speech recognition when offline is unavailable or not working. Microphone audio may leave your iPhone. Off by default.")
                 .font(.caption2).foregroundStyle(.secondary)
             Text(captionText.isEmpty ? "Listening for speech..." : captionText)
                 .font(.title3.weight(.bold))
