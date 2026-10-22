@@ -35,6 +35,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var speechTask: SFSpeechRecognitionTask?
     private var heardWake = false
     private var lastQuestion = ""
+    private var continuousWakeWanted = false
     private var timer: Timer?
     private var lastPedometerDay = Calendar.current.startOfDay(for: Date())
     private var asking = false
@@ -176,7 +177,15 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         aiAnswer = "YOU: \(trimmed)\n\nJARVIS THINKING..."
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.asking = false }
+            defer {
+                self.asking = false
+                if self.continuousWakeWanted {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                        guard let self, self.continuousWakeWanted, !self.listening else { return }
+                        self.startListening()
+                    }
+                }
+            }
             if #available(iOS 26.0, *) {
                 guard SystemLanguageModel.default.isAvailable else {
                     self.aiStatus = "Apple Intelligence on-device model is unavailable. Enable Apple Intelligence and download its model in Settings."
@@ -197,6 +206,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         }
     }
     func startListening() {
+        continuousWakeWanted = true
         SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -243,12 +253,16 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                             if !question.isEmpty && (result.isFinal || question.count > 8) {
                                 self.heardWake = true
                                 self.stopListening()
+                                self.continuousWakeWanted = true
                                 self.ask(question)
                             } else { self.voiceStatus = "Hey Jarvis heard! Speak your question..." }
                         }
                         if result.isFinal && self.listening && !self.heardWake {
                             self.stopListening()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { self.startListening() }
+                            self.continuousWakeWanted = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                                if self.continuousWakeWanted { self.startListening() }
+                            }
                         }
                     }
                     if error != nil && self.listening { self.stopListening(); self.voiceStatus = "Voice stopped; tap Start to retry" }
@@ -260,6 +274,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         }
     }
     func stopListening() {
+        continuousWakeWanted = false
         if audioEngine.isRunning { audioEngine.stop() }
         audioEngine.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
