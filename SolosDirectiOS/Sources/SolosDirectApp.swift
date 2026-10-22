@@ -382,7 +382,7 @@ struct SolosDirectHome: View {
             HStack {
                 Button("NEXT MODE") { handsFree.nextMode() }
                     .buttonStyle(.borderedProminent).tint(.mint)
-                Button(handsFree.learning ? "PRESS GLASSES BUTTON..." : "LEARN GLASSES BUTTON") {
+                Button(handsFree.learning ? "PRESS SAME BUTTON 3 TIMES..." : "LEARN GLASSES BUTTON") {
                     handsFree.learn()
                 }.buttonStyle(.bordered)
             }
@@ -390,7 +390,7 @@ struct SolosDirectHome: View {
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.mint.opacity(0.8))
                 .textSelection(.enabled)
-            Text("Learned packet: " + handsFree.learnedDescription)
+            Text("Learned stable HEX (?? = changing byte): " + handsFree.learnedDescription)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary).textSelection(.enabled)
             HStack {
