@@ -99,13 +99,13 @@ enum SolosProHUD {
                 draw("ETA " + arrival,x:21,y:188,size:17,color:blue,bold:true,maxWidth:185)
                 draw("LEFT " + left,x:211,y:188,size:17,color:pale,bold:true,maxWidth:195)
             case 2:
-                header("JARVIS ANSWER",detail:"VOICE + OLED • LIVE RESPONSE")
+                header("JARVIS ANSWER",detail:detail)
                 let p = NSMutableParagraphStyle()
                 p.lineBreakMode = .byWordWrapping
                 p.lineSpacing = 5
                 let answer = message.isEmpty ? "READY TO ANSWER" : message
-                (String(answer.prefix(260)) as NSString).draw(in:CGRect(x:19,y:46,width:392,height:160),
-                    withAttributes:[.font:UIFont.systemFont(ofSize:24,weight:.bold),
+                (answer as NSString).draw(in:CGRect(x:19,y:46,width:392,height:164),
+                    withAttributes:[.font:UIFont.systemFont(ofSize:26,weight:.black),
                                     .foregroundColor:pale,.paragraphStyle:p])
             default:
                 header("SETTINGS",detail:detail)
@@ -113,6 +113,34 @@ enum SolosProHUD {
             }
         }
     }
+    /// Wrap complete AI answers into legible 428x240 OLED pages. Never silently
+    /// cut off the last sentence simply because one page is too small.
+    static func answerPages(_ answer: String) -> [String] {
+        let font = UIFont.systemFont(ofSize:26,weight:.black)
+        let words = answer.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard !words.isEmpty else { return ["READY TO ANSWER"] }
+        var pages = [String]()
+        var lines = [String]()
+        var line = ""
+        for word in words {
+            let proposed = line.isEmpty ? word : line + " " + word
+            if (proposed as NSString).size(withAttributes:[.font:font]).width <= 388 {
+                line = proposed
+            } else {
+                if !line.isEmpty { lines.append(line) }
+                if lines.count >= 5 {
+                    pages.append(lines.joined(separator:"\\n"))
+                    lines.removeAll()
+                }
+                // Extra-long words are shown with UIKit's word wrapping.
+                line = word
+            }
+        }
+        if !line.isEmpty { lines.append(line) }
+        if !lines.isEmpty { pages.append(lines.joined(separator:"\\n")) }
+        return Array(pages.prefix(8))
+    }
+
     static func paragraph(_ text:String, top:CGFloat,size:CGFloat,maxLines:Int) {
         let p = NSMutableParagraphStyle()
         p.lineBreakMode = .byWordWrapping
