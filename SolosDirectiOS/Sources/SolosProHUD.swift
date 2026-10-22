@@ -98,6 +98,15 @@ enum SolosProHUD {
                 line(20,180,385,mint.withAlphaComponent(0.45))
                 draw("ETA " + arrival,x:21,y:188,size:17,color:blue,bold:true,maxWidth:185)
                 draw("LEFT " + left,x:211,y:188,size:17,color:pale,bold:true,maxWidth:195)
+            case 2:
+                header("JARVIS ANSWER",detail:"VOICE + OLED • LIVE RESPONSE")
+                let p = NSMutableParagraphStyle()
+                p.lineBreakMode = .byWordWrapping
+                p.lineSpacing = 5
+                let answer = message.isEmpty ? "READY TO ANSWER" : message
+                (String(answer.prefix(260)) as NSString).draw(in:CGRect(x:19,y:46,width:392,height:160),
+                    withAttributes:[.font:UIFont.systemFont(ofSize:24,weight:.bold),
+                                    .foregroundColor:pale,.paragraphStyle:p])
             default:
                 header("SETTINGS",detail:detail)
                 paragraph("VISION  •  OLED\nBATTERY " + battery + "\nBUTTON ACTIVE",top:48,size:29,maxLines:4)
