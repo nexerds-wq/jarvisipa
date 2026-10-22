@@ -120,8 +120,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
             desired = false
             return
         }
-        let offline = speech.supportsOnDeviceRecognition
-        guard offline || !onDeviceOnly else {
+        let offlineCapable = speech.supportsOnDeviceRecognition
+        guard offlineCapable || !onDeviceOnly else {
             recognizerMode = "Offline language model missing"
             status = "No on-device \(recognizedLanguage) recognizer. Enable ALLOW ONLINE SPEECH and retry, or install a supported language."
             desired = false
@@ -130,10 +130,13 @@ final class OfflineCaptionService: NSObject, ObservableObject {
 
         starting = true
         recognizer = speech
-        recognizerMode = offline ? "On-device speech" : "Online speech (consented)"
+        // With explicit consent, let the system use network recognition
+        // even when an offline model exists but is not producing results.
+        let forceOffline = onDeviceOnly && offlineCapable
+        recognizerMode = forceOffline ? "On-device speech" : "System speech (network allowed)"
         let captureRequest = SFSpeechAudioBufferRecognitionRequest()
         captureRequest.shouldReportPartialResults = true
-        captureRequest.requiresOnDeviceRecognition = offline
+        captureRequest.requiresOnDeviceRecognition = forceOffline
         request = captureRequest
 
         do {
