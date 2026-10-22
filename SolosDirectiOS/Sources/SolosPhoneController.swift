@@ -42,6 +42,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var questionSilenceWork: DispatchWorkItem?
     private var pendingVoiceQuestion = ""
     private var recognizerStartedAt = Date.distantPast
+    private var audioObservers: [NSObjectProtocol] = []
+    private var lockWatchdog: Timer?
     private var timer: Timer?
     private var lastPedometerDay = Calendar.current.startOfDay(for: Date())
     private var asking = false
@@ -57,6 +59,43 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     guard let self, self.continuousWakeWanted, !self.listening else { return }
                     self.startListening()
                 }
+            }
+        }
+        // Observe audio interruptions and route changes rather than showing
+        // "Listening" indefinitely after iOS has stopped microphone capture.
+        let center = NotificationCenter.default
+        audioObservers.append(center.addObserver(forName:AVAudioSession.interruptionNotification,
+            object:AVAudioSession.sharedInstance(),queue:.main) { [weak self] note in
+            guard let self else { return }
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            if raw == AVAudioSession.InterruptionType.began.rawValue {
+                self.voiceStatus = "iOS interrupted microphone audio"
+                self.restartRecognitionSoon()
+            } else if raw == AVAudioSession.InterruptionType.ended.rawValue {
+                self.resumeWakeIfNeeded()
+            }
+        })
+        audioObservers.append(center.addObserver(forName:AVAudioSession.routeChangeNotification,
+            object:AVAudioSession.sharedInstance(),queue:.main) { [weak self] _ in
+            guard let self else { return }
+            if self.continuousWakeWanted && !self.audioEngine.isRunning {
+                self.voiceStatus = "Audio route changed; reconnecting microphone"
+                self.restartRecognitionSoon()
+            }
+        })
+        audioObservers.append(center.addObserver(forName:AVAudioEngineConfigurationChange,
+            object:audioEngine,queue:.main) { [weak self] _ in
+            guard let self, self.continuousWakeWanted else { return }
+            self.voiceStatus = "Audio engine configuration changed; restarting"
+            self.restartRecognitionSoon()
+        })
+        lockWatchdog = Timer.scheduledTimer(withTimeInterval:5,repeats:true) { [weak self] _ in
+            guard let self, self.continuousWakeWanted else { return }
+            if self.listening && !self.audioEngine.isRunning {
+                self.voiceStatus = "Microphone stopped; trying to restore listening"
+                self.restartRecognitionSoon()
+            } else if !self.listening && !self.asking && !self.awaitingSpeechCompletion {
+                self.resumeWakeIfNeeded()
             }
         }
         location.delegate = self
@@ -269,6 +308,20 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             }
         }
     }
+    private func resumeWakeIfNeeded() {
+        guard continuousWakeWanted, !listening, !asking else { return }
+        startListening()
+    }
+
+    func resumeAfterScreenUnlock() {
+        if UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
+            continuousWakeWanted = true
+            if !listening || !audioEngine.isRunning {
+                restartRecognitionSoon()
+            }
+        }
+    }
+
     func startListening() {
         // Foreground opt-in keeps an audio recording session active. iOS may
         // allow recording to continue when locked, but not after force-quit.
@@ -310,7 +363,9 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             try audioEngine.start()
             listening = true
             recognizerStartedAt = Date()
-            voiceStatus = "Listening for Hey Jarvis (iPhone microphone)"
+            voiceStatus = "Microphone active — listening for Hey Jarvis"
+            // Background audio works only while a real audio session remains
+            // active; no silent audio playback or fake background task.
             // Apple documents a roughly 60-second recognition limit. Rotate
             // tasks before it expires instead of silently losing the wake word.
             DispatchQueue.main.asyncAfter(deadline:.now()+48) { [weak self] in
@@ -414,6 +469,11 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                 self.startListening()
             }
         }
+    }
+
+    deinit {
+        lockWatchdog?.invalidate()
+        for observer in audioObservers { NotificationCenter.default.removeObserver(observer) }
     }
 
     func stopListening() {
