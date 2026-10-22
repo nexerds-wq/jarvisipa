@@ -38,6 +38,7 @@ struct SolosDirectHome: View {
     @AppStorage("solosOrientationMode") private var orientationMode = 0
     @AppStorage("solosAutoDashboard") private var autoDashboard = true
     @AppStorage("jarvisSpeakAnswers") private var jarvisSpeakAnswers = true
+    @AppStorage("jarvisScreenOffHUD") private var screenOffHUD = false
     @State private var lastDashboardMinute = ""
     @State private var page = 0
     @State private var lastOledMessage = ""
@@ -114,7 +115,14 @@ struct SolosDirectHome: View {
                             .onChange(of: autoDashboard) { _, enabled in
                                 if enabled { sendDashboard() }
                             }
-                        HStack {
+                        Toggle("KEEP HUD UPDATING WITH SCREEN LOCKED", isOn: $screenOffHUD)
+                            .tint(.mint)
+                            .onChange(of: screenOffHUD) { _, enabled in
+                                navigation.enableBackgroundDashboard(enabled)
+                            }
+                        Text("Screen-off dashboard uses background GPS and more battery. It can continue while the app is backgrounded, but not after force-quit. Turn it off when not needed.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                         HStack {
                             Button("SEND OLED DASHBOARD") { sendDashboard() }
                                 .buttonStyle(.borderedProminent).tint(.mint)
                             Button("REFRESH SENSORS") { phone.refreshSensors() }
@@ -172,8 +180,9 @@ struct SolosDirectHome: View {
             .navigationBarTitleDisplayMode(.inline)
             .onAppear { configureHandsFree() }
             .onChange(of: accessory.connectedProtocol) { _, proto in
-                if !proto.isEmpty && autoDashboard {
-                    sendModeHUD(handsFree.mode)
+                if !proto.isEmpty {
+                    navigation.enableBackgroundDashboard(screenOffHUD)
+                    if autoDashboard { sendModeHUD(handsFree.mode) }
                 }
             }
             .onChange(of: phone.aiAnswer) { _, text in
@@ -206,6 +215,7 @@ struct SolosDirectHome: View {
     }
     private func configureHandsFree() {
         handsFree.enableMediaButtons()
+        navigation.enableBackgroundDashboard(screenOffHUD)
         accessory.onAccessoryPacket = { packet in
             handsFree.input(packet)
         }
