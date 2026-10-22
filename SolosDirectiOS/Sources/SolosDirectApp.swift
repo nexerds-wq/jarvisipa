@@ -899,7 +899,7 @@ struct SolosDirectHome: View {
             Text("SOLOS  /  iPHONE")
                 .font(.system(.title2, design: .monospaced).bold())
                 .foregroundStyle(.mint)
-            Text("V21: Back button • Instant captions • English translations • Pinned messages")
+            Text("V22: Speech fix • Stable HUD controls • Live translation • Auto-pin relay")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .padding(.vertical, 10)
