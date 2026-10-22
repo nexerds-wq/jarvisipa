@@ -1,0 +1,196 @@
+import Foundation
+import Combine
+import SwiftUI
+import AVFoundation
+import Speech
+import CoreLocation
+import CoreMotion
+import CoreBluetooth
+import FoundationModels
+
+final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerDelegate, CBCentralManagerDelegate {
+    @Published var aiStatus = "Ready to use on-device JARVIS"
+    @Published var aiAnswer = "Ask JARVIS a question or start listening."
+    @Published var transcribed = ""
+    @Published var voiceStatus = "Not listening"
+    @Published var listening = false
+    @Published var discoveredBLE = [String]()
+    @Published var bleState = "Bluetooth scan not started"
+    @Published var steps = "–"
+    @Published var speed = "–"
+    @Published var coordinates = "GPS not ready"
+    @Published var now = Date()
+
+    let accessory = SolosClassicManager()
+    private let location = CLLocationManager()
+    private let pedometer = CMPedometer()
+    private var central: CBCentralManager?
+    private var speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private let audioEngine = AVAudioEngine()
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var speechTask: SFSpeechRecognitionTask?
+    private var heardWake = false
+    private var lastQuestion = ""
+    private var timer: Timer?
+    private var asking = false
+
+    override init() {
+        super.init()
+        location.delegate = self
+        location.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        central = CBCentralManager(delegate: self, queue: nil)
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            self?.now = Date()
+        }
+    }
+    var clock: String {
+        DateFormatter.localizedString(from: now, dateStyle: .none, timeStyle: .short)
+    }
+    var dateLine: String {
+        DateFormatter.localizedString(from: now, dateStyle: .medium, timeStyle: .none)
+    }
+    var dashboard: String {
+        "\(clock)   \(dateLine)\nSteps: \(steps)   Speed: \(speed)\n\(coordinates)"
+    }
+    func refreshSensors() {
+        location.requestWhenInUseAuthorization()
+        if CLLocationManager.locationServicesEnabled() { location.startUpdatingLocation() }
+        guard CMPedometer.isStepCountingAvailable() else { steps = "No sensor"; return }
+        let start = Calendar.current.startOfDay(for: Date())
+        pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, _ in
+            DispatchQueue.main.async { self?.steps = data?.numberOfSteps.stringValue ?? "Unavailable" }
+        }
+        pedometer.startUpdates(from: start) { [weak self] data, _ in
+            DispatchQueue.main.async { self?.steps = data?.numberOfSteps.stringValue ?? "Unavailable" }
+        }
+    }
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let item = locations.last else { return }
+        coordinates = String(format: "GPS %.5f, %.5f", item.coordinate.latitude, item.coordinate.longitude)
+        speed = item.speed >= 0 ? String(format: "%.1f mph", item.speed * 2.236936) : "–"
+    }
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        coordinates = "GPS: \(error.localizedDescription)"
+    }
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        bleState = central.state == .poweredOn ? "Bluetooth on; ready to scan" : "Bluetooth: \(central.state.rawValue)"
+    }
+    func scanBLE() {
+        guard let central, central.state == .poweredOn else { bleState = "Enable Bluetooth in Settings"; return }
+        discoveredBLE.removeAll()
+        bleState = "Scanning BLE advertisements for 10 seconds..."
+        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+        DispatchQueue.main.asyncAfter(deadline: .now()+10) { [weak self] in
+            self?.central?.stopScan()
+            self?.bleState = "Scan finished. BLE visibility alone does not provide RFCOMM display access."
+        }
+    }
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
+        let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? "Unnamed BLE device"
+        let label = "\(name) (\(RSSI) dBm)"
+        if !discoveredBLE.contains(label) { discoveredBLE.append(label) }
+    }
+
+    func ask(_ question: String) {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { aiStatus = "Enter a question first."; return }
+        guard !asking else { aiStatus = "JARVIS is answering another question."; return }
+        asking = true
+        aiStatus = "Thinking entirely on your iPhone..."
+        aiAnswer = "YOU: \(trimmed)\n\nJARVIS THINKING..."
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.asking = false }
+            if #available(iOS 26.0, *) {
+                guard SystemLanguageModel.default.isAvailable else {
+                    self.aiStatus = "Apple Intelligence on-device model is unavailable. Enable Apple Intelligence and download its model in Settings."
+                    self.aiAnswer = self.aiStatus
+                    return
+                }
+                do {
+                    let session = LanguageModelSession(instructions: "You are JARVIS, a helpful offline smart glasses assistant. Give brief, accurate answers, one or two sentences. Do not claim access to the internet or live information.")
+                    let result = try await session.respond(to: trimmed)
+                    self.aiAnswer = result.content
+                    self.aiStatus = "Answered locally (no AI API key or computer)"
+                    self.accessory.sendHUD(result.content)
+                } catch {
+                    self.aiStatus = "On-device JARVIS error: \(error.localizedDescription)"
+                    self.aiAnswer = self.aiStatus
+                }
+            }
+        }
+    }
+    func startListening() {
+        SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard authorization == .authorized else { self.voiceStatus = "Speech recognition permission denied"; return }
+                AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                    DispatchQueue.main.async {
+                        if granted { self.beginRecording() }
+                        else { self.voiceStatus = "Microphone permission denied" }
+                    }
+                }
+            }
+        }
+    }
+    private func beginRecording() {
+        guard !listening else { return }
+        guard let speechRecognizer, speechRecognizer.isAvailable, speechRecognizer.supportsOnDeviceRecognition else {
+            voiceStatus = "This iPhone language pack does not support offline speech. Use typed questions."
+            return
+        }
+        heardWake = false
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        recognitionRequest?.shouldReportPartialResults = true
+        recognitionRequest?.requiresOnDeviceRecognition = true
+        guard let request = recognitionRequest else { return }
+        do {
+            let audio = AVAudioSession.sharedInstance()
+            try audio.setCategory(.record, mode: .measurement, options: [.duckOthers])
+            try audio.setActive(true, options: .notifyOthersOnDeactivation)
+            let node = audioEngine.inputNode
+            let format = node.outputFormat(forBus: 0)
+            node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in request.append(buffer) }
+            audioEngine.prepare()
+            try audioEngine.start()
+            listening = true
+            voiceStatus = "Listening for Hey Jarvis (iPhone microphone)"
+            speechTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if let result {
+                        let heard = result.bestTranscription.formattedString
+                        self.transcribed = heard
+                        if let range = heard.range(of: "hey jarvis", options: .caseInsensitive), !self.heardWake {
+                            let question = String(heard[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !question.isEmpty && (result.isFinal || question.count > 8) {
+                                self.heardWake = true
+                                self.stopListening()
+                                self.ask(question)
+                            } else { self.voiceStatus = "Hey Jarvis heard! Speak your question..." }
+                        }
+                        if result.isFinal && self.listening && !self.heardWake {
+                            self.stopListening()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { self.startListening() }
+                        }
+                    }
+                    if error != nil && self.listening { self.stopListening(); self.voiceStatus = "Voice stopped; tap Start to retry" }
+                }
+            }
+        } catch {
+            voiceStatus = "Microphone could not start: \(error.localizedDescription)"
+            stopListening()
+        }
+    }
+    func stopListening() {
+        if audioEngine.isRunning { audioEngine.stop() }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        recognitionRequest?.endAudio()
+        speechTask?.cancel()
+        speechTask = nil
+        recognitionRequest = nil
+        listening = false
+        voiceStatus = "Not listening"
+    }
+}
