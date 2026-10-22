@@ -36,6 +36,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     private var queuedPriorityFrame: Data?
     private var queuedLatestFrame: Data?
     private var nextByte = 0
+    private var drainScheduled = false
     @Published private(set) var hudFramesSent = 0
 
     var declaredProtocols: [String] {
@@ -122,6 +123,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         queuedPriorityFrame = nil
         queuedLatestFrame = nil
         nextByte = 0
+        drainScheduled = false
     }
 
     func openPicker() {
@@ -234,16 +236,30 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         }
     }
 
+    private func scheduleNextDrain() {
+        guard !drainScheduled else { return }
+        drainScheduled = true
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.008) { [weak self] in
+            guard let self else { return }
+            self.drainScheduled = false
+            self.drain()
+        }
+    }
+
     private func drain() {
-        guard let outputStream, outputStream.streamStatus == .open, !pendingFrame.isEmpty else { return }
-        while outputStream.hasSpaceAvailable && nextByte < pendingFrame.count {
+        guard let outputStream, outputStream.streamStatus == .open,
+              !pendingFrame.isEmpty else { return }
+        // Yield to iOS between chunks of a large (potentially >100KB)
+        // OLED frame instead of blocking the UI thread for the whole write.
+        var writtenThisPass = 0
+        let budget = 16 * 1024
+        while outputStream.hasSpaceAvailable && nextByte < pendingFrame.count &&
+              writtenThisPass < budget {
             let written: Int = pendingFrame.withUnsafeBytes { buffer in
                 guard let start = buffer.baseAddress else { return -1 }
-                let bytes = start.assumingMemoryBound(to: UInt8.self)
-                return outputStream.write(
-                    bytes.advanced(by: nextByte),
-                    maxLength: min(1024, pendingFrame.count - nextByte)
-                )
+                let bytes = start.assumingMemoryBound(to:UInt8.self)
+                return outputStream.write(bytes.advanced(by:nextByte),
+                                          maxLength:min(1024,pendingFrame.count-nextByte))
             }
             if written < 0 {
                 status = "Failed sending display packet: \(outputStream.streamError?.localizedDescription ?? "unknown")"
@@ -251,7 +267,9 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             }
             if written == 0 { break }
             nextByte += written
+            writtenThisPass += written
         }
+
         if nextByte == pendingFrame.count {
             hudFramesSent += 1
             status = "HUD frame #\(hudFramesSent) transmitted (\(lastFrameSize) bytes). Check the actual lens."
@@ -265,10 +283,12 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
                 queuedLatestFrame = nil
             }
             if !pendingFrame.isEmpty {
-                lastFrameSize = max(0, pendingFrame.count - 10)
-                // Continue at next writable stream event; do not recurse and
-                // monopolize the main run loop behind several full bitmaps.
+                lastFrameSize = max(0,pendingFrame.count-10)
             }
         }
+        if !pendingFrame.isEmpty && outputStream.hasSpaceAvailable {
+            scheduleNextDrain()
+        }
     }
+
 }
