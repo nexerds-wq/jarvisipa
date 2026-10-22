@@ -67,6 +67,10 @@ struct SolosDirectHome: View {
     @State private var captionText = ""
     @State private var translatedText = ""
     @State private var translationPending = ""
+    // One hot translation session per HUD language, fed the newest stabilized
+    // transcript through a size-one AsyncStream, instead of reinitializing
+    // Apple's translator for every partial result.
+    @State private var translationContinuation: AsyncStream<String>.Continuation?
     @State private var translationDebounce: DispatchWorkItem?
     @State private var translationStatus = "Select the translation HUD to start"
     @State private var lastTranslationSubmitted = ""
@@ -268,36 +272,65 @@ struct SolosDirectHome: View {
                 consumeShortcutMessage()
             }
             .translationTask(translationConfiguration) { session in
-                // Apple runs this closure when the configuration changes,
-                // including invalidate() for the next stable speech phrase.
-                // Prepare models on HUD entry, before any spoken words arrive.
-                do {
-                    try await session.prepareTranslation()
-                    let original = translationPending
-                    if original.isEmpty {
-                        await MainActor.run {
-                            guard handsFree.mode == 3 else { return }
-                            translationStatus = "Translation model READY • speak now"
-                            translatedText = "READY • SPEAK IN YOUR CHOSEN LANGUAGE"
-                            sendModeHUD(3)
-                        }
+                // The session remains warm while this HUD mode is selected.
+                // A size-one queue drops obsolete interim transcripts.
+                let feed = AsyncStream<String>.makeStream(
+                    bufferingPolicy:.bufferingNewest(1))
+                await MainActor.run {
+                    guard handsFree.mode == 3 else {
+                        feed.continuation.finish()
                         return
                     }
-                    let answer = try await session.translate(original)
+                    translationContinuation?.finish()
+                    translationContinuation = feed.continuation
+                    if !translationPending.isEmpty {
+                        feed.continuation.yield(translationPending)
+                    }
+                }
+                do {
+                    try await session.prepareTranslation()
                     await MainActor.run {
-                        guard handsFree.mode == 3, translationPending == original else { return }
-                        translationStatus = "Translated spoken " + (sourceOptions.first(where:{$0.code == sourceLocale})?.name ?? sourceLocale) + " into English"
-                        translatedText = answer.targetText
-                        sendModeHUD(3)
+                        guard handsFree.mode == 3 else { return }
+                        translationStatus = "FAST ENGLISH TRANSLATOR READY"
+                        if translatedText.isEmpty {
+                            translatedText = "SPEAK • LIVE TRANSLATION READY"
+                            sendModeHUD(3)
+                        }
+                    }
+                    for await spoken in feed.stream {
+                        if Task.isCancelled { break }
+                        guard !spoken.isEmpty else { continue }
+                        do {
+                            let answer = try await session.translate(spoken)
+                            await MainActor.run {
+                                guard handsFree.mode == 3 else { return }
+                                // Only show latest result: a slow translation
+                                // must never overwrite newer spoken words.
+                                guard translationPending == spoken else { return }
+                                translatedText = answer.targetText
+                                translationStatus = "FAST • " + (sourceOptions.first(where:{$0.code == sourceLocale})?.name ?? sourceLocale) + " → English"
+                                sendModeHUD(3)
+                            }
+                        } catch {
+                            await MainActor.run {
+                                guard handsFree.mode == 3 else { return }
+                                translationStatus = "Translation: " + error.localizedDescription
+                            }
+                        }
                     }
                 } catch {
                     await MainActor.run {
                         guard handsFree.mode == 3 else { return }
-                        translationStatus = "Translation error: " + error.localizedDescription
-                        translatedText = "TRANSLATION ERROR • See iPhone for details"
+                        translationStatus = "Translation model unavailable: " + error.localizedDescription
+                        translatedText = "CHECK TRANSLATION LANGUAGE PACK"
                         sendModeHUD(3)
                     }
                 }
+                await MainActor.run {
+                    // Do not lose a replacement stream after changing source.
+                    if handsFree.mode != 3 { translationContinuation = nil }
+                }
+                feed.continuation.finish()
             }
             .onChange(of: sourceLocale) { _, _ in
                 if handsFree.mode == 3 { beginCaptions(mode:3) }
@@ -519,6 +552,8 @@ struct SolosDirectHome: View {
             captions.stop()
             translationDebounce?.cancel()
             translationDebounce = nil
+            translationContinuation?.finish()
+            translationContinuation = nil
             translationConfiguration = nil
             translationPending = ""
             phone.setHUDCaptionsActive(false)
@@ -544,6 +579,8 @@ struct SolosDirectHome: View {
         captions.stop()
         translationDebounce?.cancel()
         translationDebounce = nil
+        translationContinuation?.finish()
+        translationContinuation = nil
         captionText = ""
         translatedText = ""
         translationPending = ""
@@ -556,7 +593,8 @@ struct SolosDirectHome: View {
             let source = String(locale.split(separator:"-").first ?? "es")
             translationConfiguration = TranslationSession.Configuration(
                 source:Locale.Language(identifier:source),
-                target:Locale.Language(identifier:"en")
+                target:Locale.Language(identifier:"en"),
+                preferredStrategy:.lowLatency
             )
         } else {
             translationConfiguration = nil
@@ -567,39 +605,36 @@ struct SolosDirectHome: View {
 
     private func debounceTranslation(_ spoken:String) {
         guard handsFree.mode == 3, !spoken.isEmpty else { return }
-        // Do not cancel Apple's translation session on every partial
-        // recognition callback. Translate when words stabilize for 1 second.
+        if sourceLocale.hasPrefix("en") {
+            translatedText = spoken
+            translationStatus = "English captions • live"
+            sendModeHUD(3)
+            return
+        }
+        // Partial speech changes often. A short adaptive debounce avoids
+        // translating every individual character while starting within a
+        // fraction of a second of a stable word group.
         translationDebounce?.cancel()
         let job = DispatchWorkItem { requestTranslation(spoken) }
         translationDebounce = job
-        DispatchQueue.main.asyncAfter(deadline:.now()+1.0,execute:job)
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.18,execute:job)
     }
 
     private func requestTranslation(_ spoken:String) {
         guard handsFree.mode == 3, !spoken.isEmpty else { return }
         if sourceLocale.hasPrefix("en") {
             translatedText = spoken
-            translationStatus = "English speech captioned directly"
+            translationStatus = "English captions • live"
             sendModeHUD(3)
             return
         }
         guard spoken != lastTranslationSubmitted else { return }
         lastTranslationSubmitted = spoken
         translationPending = spoken
-        translationStatus = "Recognized \(spoken.count) characters • translating..."
-        translatedText = "TRANSLATING • " + String(spoken.prefix(110))
-        sendModeHUD(3)
-        // The initial configuration starts model download/consent.
-        // invalidate() reruns .translationTask for each NEW stable phrase.
-        if translationConfiguration == nil {
-            let language = String(sourceLocale.split(separator:"-").first ?? "es")
-            translationConfiguration = TranslationSession.Configuration(
-                source:Locale.Language(identifier:language),
-                target:Locale.Language(identifier:"en")
-            )
-        } else {
-            translationConfiguration?.invalidate()
-        }
+        translationStatus = "TRANSLATING LIVE • " + String(spoken.prefix(42))
+        // There is no model initialization here; the single running
+        // translationTask session consumes the freshest queued speech.
+        translationContinuation?.yield(spoken)
     }
 
     private func nextTranslationLanguage() {
