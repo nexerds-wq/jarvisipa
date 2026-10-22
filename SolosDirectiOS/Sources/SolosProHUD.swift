@@ -82,14 +82,22 @@ enum SolosProHUD {
                 draw("PHONE " + battery,x:286,y:50,size:17,color:blue,bold:true,maxWidth:125)
                 draw(gps,x:285,y:81,size:12,color:dim,maxWidth:126)
             case 1:
-                header("CAPTIONS",detail:detail)
-                paragraph(message.isEmpty ? "LISTENING\nFOR SPEECH..." : message, top:49, size:30, maxLines:4)
-            case 2:
-                header("TRANSLATOR",detail:detail)
-                paragraph(message.isEmpty ? "SPEAK TO\nTRANSLATE..." : message, top:49, size:30, maxLines:4)
-            case 3:
-                header("JARVIS AI",detail:detail)
-                paragraph(message.isEmpty ? "HEY JARVIS\nI AM READY." : message, top:49, size:28, maxLines:4)
+                header("VOICE NAV",detail:detail)
+                let pieces = message.components(separatedBy:"|")
+                let distance = pieces.count > 0 ? pieces[0] : "—"
+                let direction = pieces.count > 1 ? pieces[1] : "ENTER ADDRESS ON IPHONE"
+                let arrival = pieces.count > 2 ? pieces[2] : "—"
+                let left = pieces.count > 3 ? pieces[3] : "—"
+                draw(distance, x:20,y:43,size:45,color:mint,bold:true,maxWidth:395)
+                let p = NSMutableParagraphStyle()
+                p.lineBreakMode = .byWordWrapping
+                p.lineSpacing = 3
+                (String(direction.prefix(88)) as NSString).draw(in:CGRect(x:21,y:99,width:388,height:73),
+                    withAttributes:[.font:UIFont.systemFont(ofSize:24,weight:.black),
+                                    .foregroundColor:pale,.paragraphStyle:p])
+                line(20,180,385,mint.withAlphaComponent(0.45))
+                draw("ETA " + arrival,x:21,y:188,size:17,color:blue,bold:true,maxWidth:185)
+                draw("LEFT " + left,x:211,y:188,size:17,color:pale,bold:true,maxWidth:195)
             default:
                 header("SETTINGS",detail:detail)
                 paragraph("VISION  •  OLED\nBATTERY " + battery + "\nBUTTON ACTIVE",top:48,size:29,maxLines:4)
