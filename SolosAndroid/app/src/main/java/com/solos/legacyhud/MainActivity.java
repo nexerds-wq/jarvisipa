@@ -135,8 +135,7 @@ public class MainActivity extends Activity {
       le(wake,0x601d,2);le(wake,4,2);le(wake,0,2);le(wake,0,4);
       output.write(wake.toByteArray());output.flush();Thread.sleep(100);
       byte[] image=frame(message);for(int n=0;n<image.length;n+=450)output.write(image,n,Math.min(450,image.length-n));
-      output.flush();}
-      state("Sent "+image.length+" bytes — check lens");
+      output.flush();state("Sent "+image.length+" bytes — check lens");}
     }catch(Exception e){state("Send failed: "+e.getMessage());}}).start();
   }
   @Override public void onDestroy(){if(bridge!=null)bridge.stop();try{if(socket!=null)socket.close();}catch(Exception ignored){}super.onDestroy();}
