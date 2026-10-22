@@ -52,6 +52,24 @@ enum SolosProHUD {
                 header("DASHBOARD",detail:detail)
                 draw(clock, x:16,y:46,size:45,color:pale,bold:true,maxWidth:280)
                 draw(date.uppercased(),x:20,y:101,size:14,color:mint,maxWidth:260)
+                // Glanceable step-goal progress. Defaults to 8,000 steps per local day.
+                let progress = min(1.0, max(0.0, Double(steps) / 8000.0))
+                rect(20,124,242,4,dim.withAlphaComponent(0.30),2)
+                rect(20,124,max(1,242 * progress),4,mint,2)
+                let circle = CGPoint(x:359,y:107)
+                let ring = UIBezierPath(arcCenter:circle,radius:19,
+                    startAngle:-.pi/2,endAngle:CGFloat(3 * Double.pi/2),clockwise:true)
+                ring.lineWidth = 4
+                dim.withAlphaComponent(0.33).setStroke()
+                ring.stroke()
+                let filled = UIBezierPath(arcCenter:circle,radius:19,
+                    startAngle:-.pi/2,
+                    endAngle:-.pi/2 + CGFloat(progress) * .pi * 2,
+                    clockwise:true)
+                filled.lineWidth = 4
+                mint.setStroke()
+                filled.stroke()
+                draw(String(Int(progress * 100)) + "%", x:343,y:100,size:12,color:pale,bold:true,maxWidth:35)
                 rect(12,132,124,70,panel,9)
                 rect(149,132,124,70,panel,9)
                 rect(286,132,130,70,panel,9)
