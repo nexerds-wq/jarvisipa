@@ -278,25 +278,51 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                         with: "", options: .regularExpression
                     ).trimmingCharacters(in: .whitespacesAndNewlines)
                     let prompt = cleaned.isEmpty ? trimmed : cleaned
-                    let response: String
+                    var response: String = ""
+                    var answeredOnline = false
                     do {
                         let session = LanguageModelSession(instructions: "Answer clearly in one or two short sentences.")
                         response = try await session.respond(to: prompt).content
-                    } catch {
-                        self.aiStatus = "AI first attempt failed; retrying a new session..."
-                        let retry = LanguageModelSession()
+                    } catch let firstError {
+                        self.aiStatus = "Apple AI generation failed; checking a fresh session..."
                         do {
+                            let retry = LanguageModelSession()
                             response = try await retry.respond(to: prompt).content
-                        } catch {
-                            throw NSError(domain:"SolosJarvis.AI",code:1,userInfo:[
-                                NSLocalizedDescriptionKey:"Apple on-device model failed twice: " +
-                                    String(describing:error) +
-                                    ". Check Apple Intelligence model availability, restart the iPhone, and try again."
-                            ])
+                        } catch let secondError {
+                            if UserDefaults.standard.bool(forKey: "jarvisWikipediaFallback") {
+                                // Explicit opt-in only. Wikipedia receives the factual
+                                // question over HTTPS, not the user's other app data.
+                                do {
+                                    response = try await Self.wikipediaAnswer(for: prompt)
+                                    answeredOnline = true
+                                } catch let wikipediaError {
+                                    throw NSError(domain:"SolosJarvis.AI",code:2,userInfo:[
+                                        NSLocalizedDescriptionKey:
+                                            "Apple AI: " + Self.describeModelFailure(secondError)
+                                            + " (first attempt: " + Self.describeModelFailure(firstError)
+                                            + "). Wikipedia lookup also failed: "
+                                            + wikipediaError.localizedDescription
+                                    ])
+                                }
+                            } else {
+                                throw NSError(domain:"SolosJarvis.AI",code:1,userInfo:[
+                                    NSLocalizedDescriptionKey:
+                                        "Apple AI: " + Self.describeModelFailure(secondError)
+                                        + " (first attempt: " + Self.describeModelFailure(firstError)
+                                        + "). You can enable Wikipedia factual lookup as an optional online fallback."
+                                ])
+                            }
                         }
                     }
+                    guard !response.isEmpty else {
+                        throw NSError(domain:"SolosJarvis.AI",code:3,userInfo:[
+                            NSLocalizedDescriptionKey:"The answer was empty. Try a shorter question."
+                        ])
+                    }
                     self.aiAnswer = response
-                    self.aiStatus = "Answered locally (no AI API key or computer)"
+                    self.aiStatus = answeredOnline
+                        ? "Answered from Wikipedia (ONLINE factual lookup)"
+                        : "Answered locally with Apple Intelligence"
                     // The dedicated OLED lens renderer displays complete answer pages.
                     // Avoid a competing raw HUD packet that can overwrite them.
                     if UserDefaults.standard.object(forKey: "jarvisSpeakAnswers") as? Bool ?? true {
@@ -324,7 +350,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                             self.voiceStatus = "Audio route: \(error.localizedDescription)"
                         }
                         self.awaitingSpeechCompletion = true
-                        self.accessory.speak(result.content)
+                        self.accessory.speak(response)
                     }
                 } catch {
                     self.aiStatus = "On-device JARVIS error: \(error.localizedDescription)"
@@ -333,6 +359,96 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             }
         }
     }
+    // iOS 26 Foundation Models can report an unhelpful NSError (-1).
+    // Preserve the typed error and underlying error codes for troubleshooting.
+    private static func describeModelFailure(_ error: Error) -> String {
+        let ns = error as NSError
+        var details = String(reflecting: error) + " [\\(ns.domain):\\(ns.code)]"
+        if let typed = error as? LanguageModelSession.GenerationError {
+            if let reason = typed.failureReason, !reason.isEmpty {
+                details += " Reason: " + reason
+            }
+            if let suggestion = typed.recoverySuggestion, !suggestion.isEmpty {
+                details += " Recovery: " + suggestion
+            }
+        }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
+            details += " Underlying: " + underlying.domain + ":" + String(underlying.code)
+        }
+        if let nested = ns.userInfo["NSMultipleUnderlyingErrorsKey"] as? [NSError] {
+            details += nested.prefix(3).map {
+                " Underlying: " + $0.domain + ":" + String($0.code)
+            }.joined()
+        }
+        return String(details.prefix(600))
+    }
+
+    // Not an AI replacement: encyclopedic lookup for general factual questions.
+    // Runs only when the user enables online fallback in Settings.
+    private static func wikipediaAnswer(for question: String) async throws -> String {
+        let clean = question.replacingOccurrences(
+            of: #"(?i)^\\s*(who\\s+(is|was|are|were)|what\\s+(is|was|are|were)|tell\\s+me\\s+about|explain)\\s+"#,
+            with:"", options:.regularExpression
+        ).trimmingCharacters(in:.whitespacesAndNewlines)
+        guard clean.count >= 2 && clean.count <= 150 else {
+            throw NSError(domain:"SolosJarvis.Wikipedia",code:1,userInfo:[
+                NSLocalizedDescriptionKey:"Wikipedia fallback only handles short factual queries."
+            ])
+        }
+        var search = URLComponents(string:"https://en.wikipedia.org/w/rest.php/v1/search/page")!
+        search.queryItems = [
+            URLQueryItem(name:"q",value:clean),
+            URLQueryItem(name:"limit",value:"1")
+        ]
+        guard let searchURL = search.url else {
+            throw URLError(.badURL)
+        }
+        var searchRequest = URLRequest(url:searchURL)
+        searchRequest.setValue("SolosJarvis/17.0 (iOS personal education assistant)",
+                               forHTTPHeaderField:"User-Agent")
+        searchRequest.timeoutInterval = 12
+        let (searchData, searchResponse) = try await URLSession.shared.data(for:searchRequest)
+        guard (searchResponse as? HTTPURLResponse)?.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        struct WikiSearch: Decodable {
+            struct Page: Decodable { let key: String; let title: String }
+            let pages: [Page]
+        }
+        let results = try JSONDecoder().decode(WikiSearch.self,from:searchData)
+        guard let first = results.pages.first else {
+            throw NSError(domain:"SolosJarvis.Wikipedia",code:404,userInfo:[
+                NSLocalizedDescriptionKey:"No matching Wikipedia article was found."
+            ])
+        }
+        var summaryURL = URLComponents()
+        summaryURL.scheme = "https"
+        summaryURL.host = "en.wikipedia.org"
+        summaryURL.path = "/api/rest_v1/page/summary/" + first.key
+        guard let endpoint = summaryURL.url else { throw URLError(.badURL) }
+        var request = URLRequest(url:endpoint)
+        request.setValue("SolosJarvis/17.0 (iOS personal education assistant)",
+                         forHTTPHeaderField:"User-Agent")
+        request.timeoutInterval = 12
+        let (data, http) = try await URLSession.shared.data(for:request)
+        guard (http as? HTTPURLResponse)?.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        struct WikiSummary: Decodable {
+            let title: String?
+            let extract: String?
+        }
+        let summary = try JSONDecoder().decode(WikiSummary.self,from:data)
+        guard let extract = summary.extract?.trimmingCharacters(in:.whitespacesAndNewlines),
+              !extract.isEmpty else {
+            throw NSError(domain:"SolosJarvis.Wikipedia",code:3,userInfo:[
+                NSLocalizedDescriptionKey:"Wikipedia did not provide a readable summary."
+            ])
+        }
+        // Label sources clearly on both the glasses and spoken playback.
+        return "According to Wikipedia: " + String(extract.prefix(540))
+    }
+
     private func resumeWakeIfNeeded() {
         guard continuousWakeWanted, !listening, !asking else { return }
         startListening()
