@@ -43,6 +43,8 @@ struct SolosDirectHome: View {
     @State private var page = 0
     @State private var lastOledMessage = ""
     @State private var answerShowingUntil = Date.distantPast
+    @State private var answerDisplayID = UUID()
+    @State private var lensAnswerPage = ""
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -72,8 +74,21 @@ struct SolosDirectHome: View {
                             .scrollContentBackground(.hidden)
                             .padding(8)
                             .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
-                        Button("ASK ON-DEVICE AI") { phone.ask(question) }
+                        Button("ASK ON-DEVICE AI + SHOW ON GLASSES") { phone.ask(question) }
                             .buttonStyle(.borderedProminent).tint(.mint)
+                        Button("TEST JARVIS TEXT ON REAL GLASSES") {
+                            showAnswerOnGlasses("JARVIS DISPLAY TEST. THIS ANSWER SHOULD APPEAR ON YOUR SOLOS HUD.")
+                            phone.accessory.speak("Jarvis display test")
+                        }
+                        .buttonStyle(.bordered)
+                        Text(accessory.connectedProtocol.isEmpty
+                             ? "No active glasses HUD connection. Phone preview cannot prove lens output. Open DIRECT GLASSES CONNECTION below."
+                             : "CONNECTED HUD: " + accessory.connectedName + " • " + accessory.connectedProtocol)
+                            .font(.caption.bold())
+                            .foregroundStyle(accessory.connectedProtocol.isEmpty ? .orange : .mint)
+                        Text("HUD packets transmitted: \(accessory.hudFramesSent)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
                         HStack {
                             Button(phone.listening ? "STOP LISTENING" : "START HEY JARVIS") {
                                 phone.listening ? phone.stopListening() : phone.startListening()
@@ -188,13 +203,7 @@ struct SolosDirectHome: View {
             }
             .onChange(of: phone.aiStatus) { _, status in
                 guard status.hasPrefix("Answered locally"), !phone.aiAnswer.isEmpty else { return }
-                answerShowingUntil = Date().addingTimeInterval(24)
-                sendModeHUD(2, message: phone.aiAnswer)
-                DispatchQueue.main.asyncAfter(deadline:.now()+24) {
-                    if Date() >= answerShowingUntil {
-                        sendModeHUD(handsFree.mode)
-                    }
-                }
+                showAnswerOnGlasses(phone.aiAnswer)
             }
             .onChange(of: phone.now) { _, time in
                 guard autoDashboard, handsFree.mode == 0, Date() >= answerShowingUntil, !accessory.connectedProtocol.isEmpty else { return }
@@ -210,6 +219,28 @@ struct SolosDirectHome: View {
             }
         }
     }
+    private func showAnswerOnGlasses(_ answer: String) {
+        // Real lens images are sent via EASession and the unchanged V4 RLE565
+        // packet format. The phone preview is not the lens display.
+        let pages = SolosProHUD.answerPages(answer)
+        let generation = UUID()
+        answerDisplayID = generation
+        answerShowingUntil = Date().addingTimeInterval(Double(pages.count * 7 + 5))
+        for (index, page) in pages.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index * 7)) {
+                guard answerDisplayID == generation else { return }
+                lensAnswerPage = page
+                sendModeHUD(2, message:page, detail:"JARVIS • PAGE \(index + 1)/\(pages.count)")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline:.now()+Double(pages.count * 7 + 5)) {
+            guard answerDisplayID == generation else { return }
+            answerShowingUntil = .distantPast
+            lensAnswerPage = ""
+            sendModeHUD(handsFree.mode)
+        }
+    }
+
     private func sendDashboard() {
         phone.refreshSensors()
         lastDashboardMinute = String(Calendar.current.component(.year, from: Date())) + "-" +
@@ -226,6 +257,8 @@ struct SolosDirectHome: View {
             handsFree.input(packet)
         }
         handsFree.onModeChange = { selected in
+            answerDisplayID = UUID()
+            lensAnswerPage = ""
             answerShowingUntil = .distantPast
             if selected == 0 { phone.refreshSensors() }
             sendModeHUD(selected)
@@ -233,7 +266,7 @@ struct SolosDirectHome: View {
         navigation.onUpdate = { if handsFree.mode == 1 && Date() >= answerShowingUntil { sendModeHUD(1) } }
         navigation.onBackgroundTick = {
             phone.refreshStepsOnly()
-            if autoDashboard && handsFree.mode == 0 {
+            if autoDashboard && handsFree.mode == 0 && Date() >= answerShowingUntil {
                 sendModeHUD(0)
             }
         }
@@ -241,7 +274,7 @@ struct SolosDirectHome: View {
             sendModeHUD(handsFree.mode)
         }
     }
-    private func sendModeHUD(_ mode: Int, message: String = "") {
+    private func sendModeHUD(_ mode: Int, message: String = "", detail: String = "") {
         guard !accessory.connectedProtocol.isEmpty else { return }
         let navMessage = navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining
         let view = SolosProHUD.image(mode: mode,
@@ -249,8 +282,8 @@ struct SolosDirectHome: View {
             steps: Int(phone.steps) ?? 0, distance: phone.distance,
             speed: phone.speed, battery: phone.battery,
             gps: phone.coordinates, message: mode == 1 ? navMessage : message,
-            detail: "SOLOS • \(mode + 1)/2 • VOICE NAV")
-        accessory.sendHUDImage(view)
+            detail: detail.isEmpty ? "SOLOS • \(mode + 1)/2 • VOICE NAV" : detail)
+        accessory.sendHUDImage(view, priority: mode == 2)
         lastOledMessage = message
     }
     private var navigationCard: some View {
@@ -318,11 +351,11 @@ struct SolosDirectHome: View {
             Text("MODE \(handsFree.mode + 1) / 2  •  \(modes[handsFree.mode])")
                 .font(.system(size: 15, weight: .heavy, design: .monospaced))
             Image(uiImage: SolosProHUD.image(
-                mode: handsFree.mode, clock: phone.clock,
+                mode: Date() < answerShowingUntil ? 2 : handsFree.mode, clock: phone.clock,
                 date: phone.dateLine, steps: Int(phone.steps) ?? 0,
                 distance: phone.distance, speed: phone.speed,
                 battery: phone.battery, gps: phone.coordinates,
-                message: handsFree.mode == 1 ? navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining : lastOledMessage))
+                message: Date() < answerShowingUntil ? lensAnswerPage : (handsFree.mode == 1 ? navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining : lastOledMessage)))
                 .resizable()
                 .interpolation(.none)
                 .aspectRatio(428.0 / 240.0, contentMode:.fit)
