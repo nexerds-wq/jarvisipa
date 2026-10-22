@@ -199,7 +199,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             defer {
                 self.asking = false
                 if self.continuousWakeWanted {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 35.0) { [weak self] in
                         guard let self, self.continuousWakeWanted, !self.listening else { return }
                         self.startListening()
                     }
@@ -216,7 +216,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     let result = try await session.respond(to: trimmed)
                     self.aiAnswer = result.content
                     self.aiStatus = "Answered locally (no AI API key or computer)"
-                    self.accessory.sendHUD(result.content)
+                    // The dedicated OLED lens renderer displays complete answer pages.
+                    // Avoid a competing raw HUD packet that can overwrite them.
                     if UserDefaults.standard.object(forKey: "jarvisSpeakAnswers") as? Bool ?? true {
                         // Stop microphone capture before playback: the recognition session
                         // otherwise keeps the audio route in record mode on some iPhones.
