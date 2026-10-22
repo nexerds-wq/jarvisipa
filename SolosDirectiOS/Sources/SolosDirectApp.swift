@@ -325,6 +325,10 @@ struct SolosDirectHome: View {
             .onChange(of: accessory.connectedProtocol) { _, proto in
                 if !proto.isEmpty {
                     navigation.enableBackgroundDashboard(screenOffHUD)
+                    // The same preview may have been drawn while disconnected.
+                    // Invalidate the cached send signature on a NEW session
+                    // so the real lens receives its first actual frame.
+                    lastHUDRenderSignature = ""
                     sendModeHUD(handsFree.mode)
                 }
             }
@@ -961,7 +965,7 @@ struct SolosDirectHome: View {
             Text("SOLOS  /  iPHONE")
                 .font(.system(.title2, design: .monospaced).bold())
                 .foregroundStyle(.mint)
-            Text("V22: Speech fix • Stable HUD controls • Live translation • Auto-pin relay")
+            Text("V23: Cached previews • Stable microphone • Less battery + RAM use")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .padding(.vertical, 10)
