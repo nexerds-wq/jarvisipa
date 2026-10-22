@@ -85,7 +85,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                 self.restartRecognitionSoon()
             }
         })
-        audioObservers.append(center.addObserver(forName:AVAudioEngineConfigurationChange,
+        audioObservers.append(center.addObserver(forName:Notification.Name.AVAudioEngineConfigurationChange,
             object:audioEngine,queue:.main) { [weak self] _ in
             guard let self, self.continuousWakeWanted else { return }
             self.voiceStatus = "Audio engine configuration changed; restarting"
