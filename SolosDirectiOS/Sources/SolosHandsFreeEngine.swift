@@ -20,6 +20,10 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
     @Published private(set) var learning = false
     @Published private(set) var learningAction = ""
     @Published private(set) var recognizedButtonCount = 0
+    @Published private(set) var accessoryPacketCount = 0
+    @Published private(set) var shortPacketCount = 0
+    @Published private(set) var lastMatchedControl = "None yet"
+    @Published private(set) var recentShortPackets = [String]()
 
     private var lastSwitch = Date.distantPast
     private var learnUntil = Date.distantPast
@@ -98,7 +102,7 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
 
     func setMode(_ value: Int, force: Bool = false) {
         guard (0..<Self.modeNames.count).contains(value) else { return }
-        guard force || Date().timeIntervalSince(lastSwitch) >= 0.55 else { return }
+        guard force || Date().timeIntervalSince(lastSwitch) >= 0.28 else { return }
         lastSwitch = Date()
         mode = value
         recognizedButtonCount += 1
@@ -106,12 +110,12 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
         onModeChange?(mode)
     }
 
-    func nextMode() {
-        setMode((mode + 1) % Self.modeNames.count)
+    func nextMode(force:Bool = false) {
+        setMode((mode + 1) % Self.modeNames.count,force:force)
     }
 
-    func previousMode() {
-        setMode((mode + Self.modeNames.count - 1) % Self.modeNames.count)
+    func previousMode(force:Bool = false) {
+        setMode((mode + Self.modeNames.count - 1) % Self.modeNames.count,force:force)
     }
 
     func changeLanguage() {
@@ -155,9 +159,12 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
     }
 
     private func matches(_ bytes: Data, _ signature: LearnedSignature) -> Bool {
-        guard bytes.count == signature.packetLength,
+        // InputStream delivers arbitrary chunks, not guaranteed protocol
+        // message boundaries. Match the stable prefix of an incoming chunk
+        // rather than rejecting it for extra trailing status/counter bytes.
+        guard bytes.count >= signature.bytes.count,
               signature.bytes.count == signature.mask.count,
-              bytes.count == signature.bytes.count else { return false }
+              signature.bytes.count >= 4 else { return false }
         return (0..<bytes.count).allSatisfy { i in
             ((bytes[i] ^ signature.bytes[i]) & signature.mask[i]) == 0
         }
@@ -167,6 +174,12 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
         guard !data.isEmpty else { return }
         let fingerprint = Data(data.prefix(12))
         let description = fingerprint.map { String(format:"%02X",$0) }.joined(separator:" ")
+        accessoryPacketCount += 1
+        if data.count <= 32 {
+            shortPacketCount += 1
+            recentShortPackets.append(String(format:"%d B: ",data.count) + description)
+            if recentShortPackets.count > 8 { recentShortPackets.removeFirst() }
+        }
         lastInput = "Accessory (\(data.count) B): " + description
 
         if learning {
@@ -177,27 +190,24 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
                 status = "Learning timed out."
                 return
             }
-            guard data.count >= 2 && data.count <= 24 else {
-                status = "Ignored \(data.count)-byte packet. Press \(button.rawValue) again."
+            guard data.count >= 4 && data.count <= 48 else {
+                status = "Ignored \(data.count)-byte packet; learning supports 4–48 byte control frames."
                 return
             }
             guard Date().timeIntervalSince(lastLearnSampleAt) > 0.85 else { return }
-            if let first = learnSamples.first, first.count != data.count {
-                learnSamples.removeAll()
-                lastLearnSampleAt = .distantPast
-                status = "Packet lengths differed. Retry three separate presses of \(button.rawValue)."
-                return
-            }
             lastLearnSampleAt = Date()
-            learnSamples.append(data)
+            learnSamples.append(Data(data.prefix(12)))
             guard learnSamples.count >= requiredLearnSamples else {
                 status = "\(button.rawValue) sample \(learnSamples.count)/3 saved. Press again."
                 return
             }
-            let baseline = [UInt8](learnSamples[0])
-            var stable = [UInt8](repeating:255,count:baseline.count)
+            // Stable HEADERS are useful even when a trailing counter or
+            // checksum changes the total frame/chunk length per press.
+            let prefixLength = learnSamples.map(\.count).min() ?? 0
+            let baseline = [UInt8](learnSamples[0].prefix(prefixLength))
+            var stable = [UInt8](repeating:255,count:prefixLength)
             for sample in learnSamples.dropFirst() {
-                let other = [UInt8](sample)
+                let other = [UInt8](sample.prefix(prefixLength))
                 for i in baseline.indices {
                     stable[i] &= ~(baseline[i] ^ other[i])
                 }
@@ -207,7 +217,7 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
             learning = false
             learningButton = nil
             learnSamples.removeAll()
-            guard invariantCount >= 3 && stableBits >= 32 else {
+            guard baseline.count >= 4, invariantCount >= 3 && stableBits >= 32 else {
                 status = "Not enough stable \(button.rawValue) packet bits. Mapping NOT saved."
                 return
             }
@@ -231,15 +241,19 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
             return
         }
 
-        guard Date().timeIntervalSince(lastAccessoryInput) > 0.65 else { return }
+        guard Date().timeIntervalSince(lastAccessoryInput) > 0.38 else { return }
         let hits = Button.allCases.filter { button in
             guard let signature = storedSignature(for:button) else { return false }
             return matches(data,signature)
         }
         guard hits.count == 1, let button = hits.first else {
-            if hits.count > 1 { status = "Ambiguous accessory HEX: reset and relearn conflicting buttons." }
+            if hits.count > 1 {
+                lastMatchedControl = "AMBIGUOUS"
+                status = "Two learned button signatures match; reset and relearn."
+            }
             return
         }
+        lastMatchedControl = button.rawValue
         lastAccessoryInput = Date()
         switch button {
         case .next: nextMode()
