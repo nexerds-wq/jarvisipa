@@ -41,6 +41,15 @@ struct SolosDirectHome: View {
     }
     @State private var question = "Hey Jarvis, what is a black hole?"
     @State private var customHUD = "HELLO FROM IPHONE"
+    // Renderer and V4 RLE encoder outputs are cached. Never create full
+    // 428×240 bitmaps/packets while SwiftUI recomputes the page.
+    @State private var hudPreviewImage: UIImage?
+    @State private var customHUDPreviewImage: UIImage?
+    @State private var customHUDPacketBytes = 0
+    @State private var customHUDPreviewJob: DispatchWorkItem?
+    @State private var lastHUDRenderSignature = ""
+    @State private var lastLiveHUDFrameAt = Date.distantPast
+    @State private var pendingLiveHUDWork: DispatchWorkItem?
     @AppStorage("solosOrientationMode") private var orientationMode = 0
     @AppStorage("solosAutoDashboard") private var autoDashboard = true
     @AppStorage("jarvisSpeakAnswers") private var jarvisSpeakAnswers = true
@@ -216,12 +225,18 @@ struct SolosDirectHome: View {
                             .textFieldStyle(.roundedBorder)
                         Button("SEND 428 × 240 RLE565 IMAGE") { phone.accessory.sendHUD(customHUD) }
                             .buttonStyle(.bordered)
-                        if let image = SolosDisplayPacket.imagePacket(message: customHUD) {
-                            Text("Encoded Solos frame: \(image.count) bytes").font(.caption).foregroundStyle(.secondary)
+                        if customHUDPacketBytes > 0 {
+                            Text("Cached V4 frame: \(customHUDPacketBytes) bytes")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
-                        Image(uiImage: SolosDisplayPacket.render(message: customHUD))
-                            .resizable().aspectRatio(contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        if let preview = customHUDPreviewImage {
+                            Image(uiImage: preview)
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        } else {
+                            Text("Preparing V4 image preview...")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         Text("This preview appears on iPhone regardless of Bluetooth. It appears in your glasses only if an Apple-authorized display connection succeeds.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.card()
@@ -287,8 +302,22 @@ struct SolosDirectHome: View {
             .onChange(of: sourceLocale) { _, _ in
                 if handsFree.mode == 3 { beginCaptions(mode:3) }
             }
+            .onChange(of: customHUD) { _, _ in
+                // Typing should not encode 100k pixels per keystroke.
+                customHUDPreviewJob?.cancel()
+                let work = DispatchWorkItem { refreshCustomHUDPreview() }
+                customHUDPreviewJob = work
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.5,execute:work)
+            }
+            .onChange(of: orientationMode) { _, _ in
+                refreshCustomHUDPreview()
+                lastHUDRenderSignature = ""
+                sendModeHUD(handsFree.mode)
+            }
             .onAppear {
                 configureHandsFree()
+                refreshCustomHUDPreview()
+                sendModeHUD(handsFree.mode)
                 restorePinnedMessageIfNeeded()
                 consumeShortcutMessage()
                 if lockScreenWake && handsFree.mode != 2 && handsFree.mode != 3 && !phone.listening { phone.startListening() }
@@ -397,9 +426,17 @@ struct SolosDirectHome: View {
             sendModeHUD(handsFree.mode)
         }
     }
-    private func sendModeHUD(_ mode: Int, message: String = "", detail: String = "") {
-        guard !accessory.connectedProtocol.isEmpty else { return }
-        let navMessage = navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining
+    private func refreshCustomHUDPreview() {
+        // Only on initial appearance and after the text/orientation changes.
+        // This used to run in body(), triggered by every timer or transcript.
+        let image = SolosDisplayPacket.render(message:customHUD)
+        customHUDPreviewImage = image
+        customHUDPacketBytes = SolosDisplayPacket.imagePacket(image:image)?.count ?? 0
+    }
+
+    private func sendModeHUD(_ mode:Int, message:String = "", detail:String = "") {
+        let navMessage = navigation.nextTurn + "|" + navigation.instruction + "|" +
+            navigation.eta + "|" + navigation.remaining
         let body: String
         switch mode {
         case 1: body = navMessage
@@ -416,15 +453,53 @@ struct SolosDirectHome: View {
         case 4: footer = "MESSAGE FROM SHORTCUT / PASTE"
         default: footer = "SOLOS • \(mode + 1)/5"
         }
-        let view = SolosProHUD.image(mode:mode,
-            clock:phone.clock,date:phone.dateLine,
+        let effectiveFooter = detail.isEmpty ? footer : detail
+
+        // Speech recognizer emits partial strings repeatedly. Rendering and
+        // encoding a fresh 428×240 image on every fragment blocks the main
+        // thread and can accumulate Bluetooth packets faster than the glasses
+        // can accept them. Coalesce into at most one new frame per 2.2 seconds.
+        if mode == 2 || mode == 3 {
+            let remaining = 2.2 - Date().timeIntervalSince(lastLiveHUDFrameAt)
+            if remaining > 0 {
+                if pendingLiveHUDWork == nil {
+                    let work = DispatchWorkItem {
+                        pendingLiveHUDWork = nil
+                        guard handsFree.mode == mode else { return }
+                        sendModeHUD(mode)
+                    }
+                    pendingLiveHUDWork = work
+                    DispatchQueue.main.asyncAfter(deadline:.now()+remaining,execute:work)
+                }
+                return
+            }
+            lastLiveHUDFrameAt = Date()
+        } else {
+            pendingLiveHUDWork?.cancel()
+            pendingLiveHUDWork = nil
+        }
+
+        // A second identical frame should never be encoded or queued.
+        let signature = [String(mode),phone.clock,phone.dateLine,phone.steps,
+                         phone.distance,phone.speed,phone.battery,phone.coordinates,
+                         body,effectiveFooter,messageSender,
+                         String(currentMessagePage),String(messagePhoto != nil)].joined(separator:"|")
+        guard signature != lastHUDRenderSignature else { return }
+        lastHUDRenderSignature = signature
+
+        let view = SolosProHUD.image(mode:mode,clock:phone.clock,date:phone.dateLine,
             steps:Int(phone.steps) ?? 0,distance:phone.distance,
             speed:phone.speed,battery:phone.battery,gps:phone.coordinates,
-            message:body,detail:detail.isEmpty ? footer : detail,
+            message:body,detail:effectiveFooter,
             sender:messageSender,senderPhoto:messagePhoto,
             messagePage:currentMessagePage + 1,pageCount:messagePages.count)
-        accessory.sendHUDImage(view,priority:mode == 4 || mode == 5)
+        // SwiftUI reuses this immutable bitmap instead of rerendering on
+        // every @Published update across the 850-line scrolling view.
+        hudPreviewImage = view
         lastOledMessage = body
+        if !accessory.connectedProtocol.isEmpty {
+            accessory.sendHUDImage(view,priority:mode == 4 || mode == 5)
+        }
     }
 
     private func enterHUDMode(_ selected: Int) {
@@ -700,29 +775,16 @@ struct SolosDirectHome: View {
             }
             Text("MODE \(handsFree.mode + 1) / 5  •  \(SolosHandsFreeEngine.modeNames[handsFree.mode])")
                 .font(.system(size:14,weight:.heavy,design:.monospaced))
-            let previewMode = Date() < answerShowingUntil && handsFree.mode != 4 ? 5 : handsFree.mode
-            let previewMessage: String = {
-                switch previewMode {
-                case 1:
-                    return navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining
-                case 2: return captionText
-                case 3: return translatedText
-                case 4: return messagePages[min(currentMessagePage,messagePages.count - 1)]
-                case 5: return lensAnswerPage
-                default: return lastOledMessage
-                }
-            }()
-            Image(uiImage:SolosProHUD.image(
-                mode:previewMode,clock:phone.clock,date:phone.dateLine,
-                steps:Int(phone.steps) ?? 0,distance:phone.distance,
-                speed:phone.speed,battery:phone.battery,gps:phone.coordinates,
-                message:previewMessage,sender:messageSender,
-                senderPhoto:messagePhoto,messagePage:currentMessagePage + 1,
-                pageCount:messagePages.count))
-                .resizable().interpolation(.none)
-                .aspectRatio(428.0 / 240.0,contentMode:.fit)
-                .clipShape(RoundedRectangle(cornerRadius:11))
-                .overlay(RoundedRectangle(cornerRadius:11).stroke(.mint.opacity(0.5),lineWidth:1))
+            if let cachedPreview = hudPreviewImage {
+                Image(uiImage:cachedPreview)
+                    .resizable().interpolation(.none)
+                    .aspectRatio(428.0 / 240.0,contentMode:.fit)
+                    .clipShape(RoundedRectangle(cornerRadius:11))
+                    .overlay(RoundedRectangle(cornerRadius:11).stroke(.mint.opacity(0.5),lineWidth:1))
+            } else {
+                Text("HUD preview initializes when the screen is selected")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Text(handsFree.status).font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button("◀ BACK HUD") { handsFree.previousMode(force:true) }
