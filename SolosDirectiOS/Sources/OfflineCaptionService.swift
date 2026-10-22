@@ -36,6 +36,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var failureCount = 0
     private var lastRestart = Date.distantPast
     private var buffersCaptured = 0
+    private var audioInterrupted = false
+    private var lastAudioConfiguration = Date.distantPast
 
     override init() {
         super.init()
@@ -46,11 +48,13 @@ final class OfflineCaptionService: NSObject, ObservableObject {
             guard let self, self.desired else { return }
             let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
             if raw == AVAudioSession.InterruptionType.began.rawValue {
+                self.audioInterrupted = true
                 self.generation += 1
                 self.restartTask?.cancel()
                 self.cleanup()
                 self.status = "Mic interrupted by iOS; resuming when available"
             } else if raw == AVAudioSession.InterruptionType.ended.rawValue {
+                self.audioInterrupted = false
                 self.scheduleRestart(reason:"Microphone interruption ended")
             }
         })
@@ -58,14 +62,21 @@ final class OfflineCaptionService: NSObject, ObservableObject {
             forName:AVAudioSession.routeChangeNotification,
             object:AVAudioSession.sharedInstance(),queue:.main) { [weak self] _ in
             guard let self, self.desired else { return }
-            // Route changes can invalidate AVAudioEngine's input format.
-            self.scheduleRestart(reason:"Microphone route changed")
+            // AudioSession.setCategory used by our own startup emits a route
+            // change. Restarting an already healthy engine here creates an
+            // endless stop/start feedback loop and rapidly exhausts resources.
+            guard !self.audioInterrupted, !self.starting,
+                  !self.engine.isRunning,
+                  Date().timeIntervalSince(self.lastAudioConfiguration) > 1.5 else { return }
+            self.scheduleRestart(reason:"Microphone route changed and engine stopped")
         })
         observerTokens.append(notifications.addObserver(
             forName:Notification.Name.AVAudioEngineConfigurationChange,
             object:engine,queue:.main) { [weak self] _ in
-            guard let self, self.desired else { return }
-            self.scheduleRestart(reason:"Audio configuration changed")
+            guard let self, self.desired, !self.audioInterrupted,
+                  !self.starting, !self.engine.isRunning,
+                  Date().timeIntervalSince(self.lastAudioConfiguration) > 1.5 else { return }
+            self.scheduleRestart(reason:"Audio engine configuration changed")
         })
     }
 
@@ -77,6 +88,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         buffersCaptured = 0
         lastDisplay = .distantPast
         failureCount = 0
+        audioInterrupted = false
+        lastAudioConfiguration = .distantPast
         desired = true
         localeCode = locale
         recognizedLanguage = name
@@ -141,6 +154,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
 
         do {
             let audio = AVAudioSession.sharedInstance()
+            lastAudioConfiguration = Date()
             try audio.setCategory(.playAndRecord,mode:.default,
                                   options:[.defaultToSpeaker,.allowBluetooth])
             try audio.setActive(true)
@@ -220,7 +234,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     }
 
     private func scheduleRestart(reason:String) {
-        guard desired else { return }
+        guard desired, !audioInterrupted, restartTask == nil else { return }
         guard Date().timeIntervalSince(lastRestart) >= 0.4 else { return }
         lastRestart = Date()
         generation += 1
@@ -231,7 +245,10 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         status = "\(reason). Reconnecting mic..."
         let expected = generation
         let job = DispatchWorkItem { [weak self] in
-            guard let self, self.desired, self.generation == expected else { return }
+            guard let self else { return }
+            self.restartTask = nil
+            guard self.desired, !self.audioInterrupted,
+                  self.generation == expected else { return }
             self.beginRecognition()
         }
         restartTask = job
