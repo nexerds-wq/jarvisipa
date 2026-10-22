@@ -81,7 +81,7 @@ struct SolosDirectHome: View {
                         Text(phone.coordinates).font(.caption).foregroundStyle(.mint)
                         Text(phone.motionStatus).font(.caption2).foregroundStyle(.secondary)
                         Text(phone.locationStatus).font(.caption2).foregroundStyle(.secondary)
-                        Toggle("LIVE OLED DASHBOARD: refresh on lens every 30 sec", isOn: $autoDashboard)
+                        Toggle("LIVE OLED DASHBOARD: refresh on lens each minute", isOn: $autoDashboard)
                             .tint(.mint)
                             .onChange(of: autoDashboard) { _, enabled in
                                 if enabled { sendDashboard() }
