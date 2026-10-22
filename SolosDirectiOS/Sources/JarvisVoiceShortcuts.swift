@@ -79,7 +79,7 @@ struct ShowJarvisMessageIntent: AppIntent {
     var message: String
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Show message from \\(.$sender): \\(.$message)")
+        Summary("Show message from \(.$sender): \(.$message)")
     }
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
