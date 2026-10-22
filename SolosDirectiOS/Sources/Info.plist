@@ -15,6 +15,11 @@
 <key>NSMicrophoneUsageDescription</key><string>Listen for Hey Jarvis and questions on your iPhone.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Recognize Hey Jarvis and spoken questions with on-device speech processing.</string>
 <key>NSLocationWhenInUseUsageDescription</key><string>Track your route while you navigate, including when the iPhone screen is locked, so the glasses can show updates and speak turns.</string>
+<key>NSContactsUsageDescription</key><string>Show the contact name and profile photo on your Solos message HUD when you choose to share a message.</string>
+<key>CFBundleURLTypes</key><array><dict>
+<key>CFBundleURLName</key><string>com.nexer.solosjarvisbg.message</string>
+<key>CFBundleURLSchemes</key><array><string>solosjarvis</string></array>
+</dict></array>
 <key>NSMotionUsageDescription</key><string>Count your daily steps using the iPhone's motion sensors.</string>
 <key>UIBackgroundModes</key><array><string>bluetooth-central</string><string>external-accessory</string><string>location</string><string>audio</string></array>
 <key>UISupportedExternalAccessoryProtocols</key><array>
