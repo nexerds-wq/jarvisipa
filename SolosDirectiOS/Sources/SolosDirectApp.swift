@@ -248,6 +248,10 @@ struct SolosDirectHome: View {
                 }
             }
             .onOpenURL { url in acceptIncomingMessageURL(url) }
+            .onReceive(NotificationCenter.default.publisher(
+                for:Notification.Name("SolosJarvisIncomingMessage"))) { _ in
+                consumeShortcutMessage()
+            }
             .translationTask(translationConfiguration) { session in
                 // Apple runs this closure when the configuration changes,
                 // including invalidate() for the next stable speech phrase.
@@ -285,6 +289,7 @@ struct SolosDirectHome: View {
             }
             .onAppear {
                 configureHandsFree()
+                restorePinnedMessageIfNeeded()
                 consumeShortcutMessage()
                 if lockScreenWake && handsFree.mode != 2 && handsFree.mode != 3 && !phone.listening { phone.startListening() }
             }
@@ -299,6 +304,9 @@ struct SolosDirectHome: View {
                 showAnswerOnGlasses(phone.aiAnswer)
             }
             .onChange(of: phone.now) { _, time in
+                // Shortcut automations may execute in a separate process.
+                // Poll while the app is actually running; the foreground
+                // notification observer above makes same-process changes instant.
                 consumeShortcutMessage()
                 guard autoDashboard, handsFree.mode == 0, Date() >= answerShowingUntil, !accessory.connectedProtocol.isEmpty else { return }
                 let stamp = String(Calendar.current.component(.year, from: time)) + "-" +
@@ -437,6 +445,9 @@ struct SolosDirectHome: View {
             phone.setHUDCaptionsActive(false)
             if selected == 0 { phone.refreshSensors() }
         }
+        if selected != 4 {
+            UserDefaults.standard.set(false,forKey:"jarvisMessagePinned")
+        }
         if selected == 4 {
             messagePages = SolosProHUD.messagePages(messageBody)
             currentMessagePage = 0
@@ -537,7 +548,25 @@ struct SolosDirectHome: View {
         }
         messagePages = SolosProHUD.messagePages(messageBody)
         currentMessagePage = 0
+        // Remember the pinned message across a respring/app restart, without
+        // requiring permission to read the Messages database.
+        UserDefaults.standard.set(messageSender,forKey:"jarvisPinnedSender")
+        UserDefaults.standard.set(messageBody,forKey:"jarvisPinnedBody")
+        UserDefaults.standard.set(true,forKey:"jarvisMessagePinned")
+        messageRelayStatus = "Pinned \(messagePages.count) page(s) • sender: " + messageSender
         handsFree.setMode(4,force:true)
+    }
+
+    private func restorePinnedMessageIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey:"jarvisMessagePinned"),
+              let body = defaults.string(forKey:"jarvisPinnedBody"),
+              !body.isEmpty else { return }
+        messageSender = defaults.string(forKey:"jarvisPinnedSender") ?? "NEW MESSAGE"
+        messageBody = body
+        messagePhoto = nil
+        loadExistingContactPhoto(for:messageSender)
+        pinCurrentMessage()
     }
 
     private func consumeShortcutMessage() {
@@ -547,6 +576,7 @@ struct SolosDirectHome: View {
               let body = defaults.string(forKey:"jarvisIncomingMessageBody"),
               !body.isEmpty else { return }
         lastIncomingMessageID = id
+        messageRelayStatus = "Incoming Shortcuts message detected • pinning..."
         messageSender = defaults.string(forKey:"jarvisIncomingMessageSender") ?? "NEW MESSAGE"
         messageBody = body
         messagePhoto = nil
@@ -695,9 +725,9 @@ struct SolosDirectHome: View {
                 .overlay(RoundedRectangle(cornerRadius:11).stroke(.mint.opacity(0.5),lineWidth:1))
             Text(handsFree.status).font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("◀ BACK HUD") { handsFree.previousMode() }
+                Button("◀ BACK HUD") { handsFree.previousMode(force:true) }
                     .buttonStyle(.borderedProminent).tint(.cyan)
-                Button("NEXT HUD ▶") { handsFree.nextMode() }
+                Button("NEXT HUD ▶") { handsFree.nextMode(force:true) }
                     .buttonStyle(.borderedProminent).tint(.mint)
             }
             HStack {
@@ -712,6 +742,16 @@ struct SolosDirectHome: View {
             Text("Accessory input: " + accessory.incomingSample)
                 .font(.system(size:10,design:.monospaced)).foregroundStyle(.mint.opacity(0.8))
                 .textSelection(.enabled)
+            Text("INCOMING PACKETS: \(handsFree.accessoryPacketCount)  •  SMALL CONTROL CANDIDATES: \(handsFree.shortPacketCount)")
+                .font(.caption2.monospaced()).foregroundStyle(.mint)
+            Text("LAST PHYSICAL CONTROL MATCH: " + handsFree.lastMatchedControl)
+                .font(.caption2.monospaced()).foregroundStyle(.secondary)
+            ForEach(Array(handsFree.recentShortPackets.suffix(3)),id:\.self) { packet in
+                Text(packet).font(.system(size:10,design:.monospaced))
+                    .foregroundStyle(.secondary).textSelection(.enabled)
+            }
+            Text("If INCOMING PACKETS remains 0 after you press a glasses button, iOS is not delivering its control data to this accessory session. No HEX learner can map an invisible button.")
+                .font(.caption2).foregroundStyle(.orange)
             Text("NEXT: " + handsFree.learnedDescription(.next))
                 .font(.caption2.monospaced()).textSelection(.enabled)
             Text("BACK: " + handsFree.learnedDescription(.back))
@@ -841,7 +881,15 @@ struct SolosDirectHome: View {
             if !contactsStatus.isEmpty {
                 Text(contactsStatus).font(.caption).foregroundStyle(.secondary)
             }
-            Text("In iPhone Shortcuts: Automation → Message → Run Immediately → Show Jarvis Message. Set Sender and Message from the Shortcut Input fields. It may need the iPhone unlocked to open Jarvis. You can also use solosjarvis://message?from=NAME&body=TEXT (URL-encoded).")
+            Button("TEST AUTOMATIC MESSAGE PINNING") {
+                messageSender = "JARVIS MESSAGE TEST"
+                messageBody = "This test simulates a new message, automatically pins it to the glasses, and keeps it there until you change the HUD."
+                messagePhoto = nil
+                pinCurrentMessage()
+            }.buttonStyle(.bordered)
+            Text(messageRelayStatus).font(.caption2).foregroundStyle(.mint)
+            Text("For actual incoming iMessages, first configure Shortcuts → Automation → Message → Run Immediately → Show Jarvis Message; map the trigger's Sender and Message variables to the action fields. A regular app cannot read all Messages notifications. The action may need iOS to open Jarvis, especially while locked.")
+                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
         }.card()
     }
