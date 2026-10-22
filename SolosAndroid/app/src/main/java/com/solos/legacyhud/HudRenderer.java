@@ -13,7 +13,7 @@ public class HudRenderer {
     Paint p=new Paint(3);
     int mint=Color.rgb(88,250,190), white=Color.WHITE, dim=Color.rgb(135,166,164), amber=Color.rgb(245,189,70);
     rect(c,p,0,0,428,4,mint);
-    txt(c,p,"SOLOS  /  "+(mode==0?"OFFLINE DASHBOARD":mode==1?"LIVE CAPTIONS":"ES > EN TRANSLATOR"),16,24,17,mint,true);
+    txt(c,p,"SOLOS  /  "+(mode==0?"OFFLINE DASHBOARD":mode==1?"LIVE CAPTIONS":mode==2?"ES > EN TRANSLATOR":"JARVIS AI OFFLINE"),16,24,17,mint,true);
     String date=new SimpleDateFormat("EEE, MMM d",Locale.US).format(new Date());
     String time=new SimpleDateFormat("h:mm a",Locale.US).format(new Date());
     txt(c,p,time,16,76,45,white,true);
@@ -31,9 +31,9 @@ public class HudRenderer {
       txt(c,p,trim(weatherSource,48),16,230,12,dim,false);
     }else {
       line(c,p,16,111,411,111,dim);
-      txt(c,p,mode==1?"HEARING ENGLISH":"HEARING SPANISH > ENGLISH",16,132,15,dim,false);
+      txt(c,p,mode==1?"HEARING ENGLISH":mode==2?"HEARING SPANISH > ENGLISH":"HEY JARVIS / AI ANSWER",16,132,15,dim,false);
       String s=(speech==null||speech.trim().isEmpty())?"Listening...":speech.trim();
-      drawWrapped(c,p,s,16,164,392,23,25,white,3);
+      drawWrapped(c,p,s,16,164,392,mode==3?21:23,mode==3?20:25,white,3);
       txt(c,p,trim(note,55),16,229,13,mint,false);
     }
     return bmp;
