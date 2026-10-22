@@ -14,8 +14,8 @@ struct SolosDirectApp: App {
                     if phase == .active {
                         phone.refreshStepsOnly()
                         phone.accessory.refresh()
-                        if UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") && !phone.listening {
-                            phone.startListening()
+                        if UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
+                            phone.resumeAfterScreenUnlock()
                         }
                     } else if phase == .background &&
                                 !UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
