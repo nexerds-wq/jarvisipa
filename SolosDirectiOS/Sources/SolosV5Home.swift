@@ -63,7 +63,12 @@ private let deepBlack = Color(red: 0.007, green: 0.015, blue: 0.020)
 
 struct SolosV5Home: View {
     @ObservedObject var phone: SolosPhoneController
+    @ObservedObject private var accessory: SolosClassicManager
     @StateObject private var captions = OfflineCaptionService()
+    init(phone: SolosPhoneController) {
+        self.phone = phone
+        self._accessory = ObservedObject(wrappedValue: phone.accessory)
+    }
     @AppStorage("hudRotation") private var rotateDisplay = true
     @AppStorage("hudHighContrast") private var contrast = true
     @AppStorage("hudGiantText") private var giantText = false
@@ -80,6 +85,7 @@ struct SolosV5Home: View {
     @State private var translationStatus = "Choose a language pair. Models download once, then work offline."
     @State private var displayingText = "JARVIS / SOLOS\nREADY"
     @State private var lastCaptionSent = Date.distantPast
+    @State private var lastMinuteShown = ""
 
     var body: some View {
         NavigationStack {
@@ -131,7 +137,7 @@ struct SolosV5Home: View {
                     displayingText = text
                     if Date().timeIntervalSince(lastCaptionSent) > 1.25 {
                         lastCaptionSent = Date()
-                        phone.accessory.sendHUD(text)
+                        accessory.sendHUD(text)
                     }
                 }
             }
@@ -144,10 +150,20 @@ struct SolosV5Home: View {
                     showing(text)
                 }
             }
+            .onChange(of: phone.now) { _, time in
+                guard mode == .dashboard, !accessory.connectedProtocol.isEmpty else { return }
+                let minute = String(Calendar.current.component(.hour, from: time)) + ":" +
+                    String(Calendar.current.component(.minute, from: time))
+                if minute != lastMinuteShown {
+                    lastMinuteShown = minute
+                    showing(phone.dashboard)
+                }
+            }
             .onChange(of: phone.aiAnswer) { _, text in
                 if mode == .jarvis, !text.isEmpty { displayingText = text }
             }
             .onChange(of: mode) { _, next in
+                if next == .dashboard && !accessory.connectedProtocol.isEmpty { showing(phone.dashboard) }
                 if next == .jarvis { captions.stop() }
                 else { phone.stopListening() }
             }
@@ -163,7 +179,7 @@ struct SolosV5Home: View {
     }
     private func showing(_ text: String) {
         displayingText = text
-        phone.accessory.sendHUD(text)
+        accessory.sendHUD(text)
     }
     private func requestTranslation() {
         guard !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -232,13 +248,13 @@ struct SolosV5Home: View {
     private var connectionStrip: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(phone.accessory.connectedProtocol.isEmpty ? .orange : neon)
+                .fill(accessory.connectedProtocol.isEmpty ? .orange : neon)
                 .frame(width: 8, height: 8)
-            Text(phone.accessory.connectedProtocol.isEmpty ? "GLASSES LINK: NOT AUTHORIZED" : "DIRECT LINK CONNECTED")
+            Text(accessory.connectedProtocol.isEmpty ? "GLASSES LINK: NOT AUTHORIZED" : "DIRECT LINK CONNECTED")
                 .font(.system(size: 11, weight: .heavy, design: .monospaced))
                 .lineLimit(2)
             Spacer()
-            Button("REFRESH") { phone.accessory.refresh() }
+            Button("REFRESH") { accessory.refresh() }
                 .font(.system(size: 10, weight: .black, design: .monospaced))
                 .foregroundStyle(neon)
         }
@@ -308,7 +324,7 @@ struct SolosV5Home: View {
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(neon)
             heroButton("DISPLAY LIVE DATA",symbol:"eye.fill") { showing(phone.dashboard) }
-            Text("Clock, motion and satellite GPS work without data or API keys. Keep the app open for refresh.")
+            Text("Clock updates automatically every minute while connected and on this screen. GPS and steps use local phone sensors. Keep the app open.")
                 .font(.caption).foregroundStyle(.secondary)
         }.panel()
     }
@@ -417,9 +433,9 @@ struct SolosV5Home: View {
                 .padding(12)
                 .background(.black,in:RoundedRectangle(cornerRadius:12))
             heroButton("ASK JARVIS OFFLINE",symbol:"sparkles") { phone.ask(question) }
-            heroButton(phone.listening ? "STOP HEY JARVIS" : "LISTEN FOR HEY JARVIS",symbol:phone.listening ? "stop.fill" : "waveform") {
+            heroButton(phone.wakeEnabled ? "STOP HEY JARVIS" : "LISTEN FOR HEY JARVIS",symbol:phone.wakeEnabled ? "stop.fill" : "waveform") {
                 captions.stop()
-                phone.listening ? phone.stopListening() : phone.startListening()
+                phone.wakeEnabled ? phone.stopListening() : phone.startListening()
             }
             Text(phone.voiceStatus).font(.caption).foregroundStyle(.secondary)
             if !phone.transcribed.isEmpty {
@@ -453,16 +469,16 @@ struct SolosV5Home: View {
     private var connectionPanel: some View {
         VStack(alignment:.leading,spacing:12) {
             sectionTitle("DIRECT SOLOS LINK",symbol:"antenna.radiowaves.left.and.right")
-            Text(phone.accessory.status).foregroundStyle(.white.opacity(0.8)).font(.caption)
+            Text(accessory.status).foregroundStyle(.white.opacity(0.8)).font(.caption)
             HStack {
-                Button("PAIR ACCESSORY") { phone.accessory.openPicker() }.buttonStyle(.borderedProminent).tint(neon)
-                Button("REFRESH") { phone.accessory.refresh() }.buttonStyle(.bordered).tint(neon)
+                Button("PAIR ACCESSORY") { accessory.openPicker() }.buttonStyle(.borderedProminent).tint(neon)
+                Button("REFRESH") { accessory.refresh() }.buttonStyle(.bordered).tint(neon)
             }
-            if phone.accessory.accessories.isEmpty {
+            if accessory.accessories.isEmpty {
                 Text("No External Accessory protocol exposed right now. Your previous working connection is required to send images to the lens.")
                     .font(.caption).foregroundStyle(.orange)
             }
-            ForEach(phone.accessory.accessories) { device in
+            ForEach(accessory.accessories) { device in
                 VStack(alignment:.leading,spacing:8) {
                     Text(device.name).font(.headline)
                     Text("Maker: \(device.manufacturer)")
@@ -470,7 +486,7 @@ struct SolosV5Home: View {
                         .font(.caption.monospaced()).textSelection(.enabled)
                     ForEach(device.protocols,id:\.self) { proto in
                         Button("CONNECT \(proto)") {
-                            phone.accessory.connect(accessoryID:device.id,protocolString:proto)
+                            accessory.connect(accessoryID:device.id,protocolString:proto)
                         }
                         .buttonStyle(.bordered).tint(neon)
                     }
