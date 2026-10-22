@@ -91,7 +91,11 @@ enum SolosDisplayPacket {
             ])
         }
 
-        for offset in stride(from: 0, to: rgba.count, by: 4) {
+        // OFF preserves the exact pixel sequence from the V4 build you verified.
+        // ON reverses pixel order, which is a 180-degree rotation in row-major RGB565.
+        let rotate180 = UserDefaults.standard.bool(forKey: "solosFlip180")
+        for i in 0..<(width * height) {
+            let offset = rotate180 ? (width * height - i - 1) * 4 : i * 4
             let red = UInt16(rgba[offset] >> 3)
             let green = UInt16(rgba[offset + 1] >> 2)
             let blue = UInt16(rgba[offset + 2] >> 3)
