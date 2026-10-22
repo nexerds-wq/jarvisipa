@@ -69,8 +69,10 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             guard let self else { return }
             let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
             if raw == AVAudioSession.InterruptionType.began.rawValue {
-                self.voiceStatus = "iOS interrupted microphone audio"
-                self.restartRecognitionSoon()
+                let rearm = self.continuousWakeWanted
+                self.stopListening()
+                self.continuousWakeWanted = rearm
+                self.voiceStatus = "iOS interrupted microphone audio; waiting for it to end"
             } else if raw == AVAudioSession.InterruptionType.ended.rawValue {
                 self.resumeWakeIfNeeded()
             }
