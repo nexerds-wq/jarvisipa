@@ -8,12 +8,20 @@ import CoreGraphics
 enum SolosDisplayPacket {
     static let width = 428
     static let height = 240
+    // Orientation is applied only to source pixel selection. The proven V4 frame
+    // header, RLE565 compression, and ExternalAccessory transport stay untouched.
+    static let orientations = ["V4 original", "Rotate 180°", "Mirror left/right", "Flip top/bottom"]
+    static var orientation: Int { max(0, min(3, UserDefaults.standard.integer(forKey: "solosOrientationMode"))) }
+
     static var sharpVision: Bool { UserDefaults.standard.bool(forKey: "solosVisionBold") }
     static var giantVision: Bool { UserDefaults.standard.bool(forKey: "solosVisionGiant") }
 
     static func render(message: String) -> UIImage {
         let size = CGSize(width: width, height: height)
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0 // Render at the exact 428x240 pixel grid (no retina downsampling)
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { context in
             UIColor.black.setFill()
             context.fill(CGRect(origin: .zero, size: size))
@@ -93,11 +101,18 @@ enum SolosDisplayPacket {
             ])
         }
 
-        // OFF preserves the exact pixel sequence from the V4 build you verified.
-        // ON reverses pixel order, which is a 180-degree rotation in row-major RGB565.
-        let rotate180 = UserDefaults.standard.bool(forKey: "solosFlip180")
+        let mode = orientation
+        // Mode 0: byte-for-byte identical traversal to proven V4.1
+        // Mode 1: rotate 180, mode 2: mirror horizontally, mode 3: flip vertically.
+        // Image axes differ from optics on reflective glasses; each correction can
+        // be tested independently without changing the Bluetooth connection.
         for i in 0..<(width * height) {
-            let offset = rotate180 ? (width * height - i - 1) * 4 : i * 4
+            let x = i % width, y = i / width
+            let flipX = mode == 1 || mode == 2
+            let flipY = mode == 1 || mode == 3
+            let srcX = flipX ? width - 1 - x : x
+            let srcY = flipY ? height - 1 - y : y
+            let offset = (srcY * width + srcX) * 4
             let red = UInt16(rgba[offset] >> 3)
             let green = UInt16(rgba[offset + 1] >> 2)
             let blue = UInt16(rgba[offset + 2] >> 3)
