@@ -13,7 +13,7 @@ struct SolosAccessoryInfo: Identifiable {
 
 /// iOS has no public API to open arbitrary Bluetooth Classic RFCOMM sockets.
 /// ExternalAccessory works only with manufacturer-approved MFi accessories/protocols.
-final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
+final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVSpeechSynthesizerDelegate {
     @Published private(set) var accessories: [SolosAccessoryInfo] = []
     @Published private(set) var status = "Checking for compatible Bluetooth accessories..."
     @Published private(set) var connectedName = ""
@@ -23,6 +23,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
     // Exposes only received accessory payloads to user-configured button learning.
     // Unrecognized bytes are never interpreted as controls.
     var onAccessoryPacket: ((Data) -> Void)?
+    var onSpeechCompleted: (() -> Void)?
     @Published private(set) var incomingSample = "No accessory messages received"
     private let accessoryManager = EAAccessoryManager.shared()
     private let speaker = AVSpeechSynthesizer()
@@ -40,6 +41,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
 
     override init() {
         super.init()
+        speaker.delegate = self
         refresh()
     }
 
@@ -182,6 +184,14 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
         utterance.rate = 0.49
         speaker.speak(utterance)
         status = "Speaking using current iPhone audio route: \(audioRoute). Pair Solos as an audio headset first."
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        onSpeechCompleted?()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        onSpeechCompleted?()
     }
 
     func stream(_ aStream: Stream, handle eventCode: Stream.Event) {
