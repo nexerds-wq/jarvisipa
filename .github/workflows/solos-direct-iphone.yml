@@ -1,7 +1,7 @@
 name: Build Solos Direct iPhone IPA
 on:
   push:
-    branches: [solos-iphone-direct-ai, solos-iphone-v4-stable-flip, solos-iphone-v6-stable-features, solos-iphone-v7-orientation-dashboard, solos-iphone-v8-handsfree, solos-iphone-v9-voice-navigation, solos-iphone-v10-background-voice, solos-iphone-v11-spoken-screen-answers, solos-iphone-v12-jarvis-hud, solos-iphone-v13-lock-bargein, solos-iphone-v14-speech-pause-background, solos-iphone-v15-lockscreen-stability, solos-iphone-v16-ai-recovery, solos-iphone-v17-reliable-answers, solos-iphone-v18-auto-rearm-wake]
+    branches: [solos-iphone-direct-ai, solos-iphone-v4-stable-flip, solos-iphone-v6-stable-features, solos-iphone-v7-orientation-dashboard, solos-iphone-v8-handsfree, solos-iphone-v9-voice-navigation, solos-iphone-v10-background-voice, solos-iphone-v11-spoken-screen-answers, solos-iphone-v12-jarvis-hud, solos-iphone-v13-lock-bargein, solos-iphone-v14-speech-pause-background, solos-iphone-v15-lockscreen-stability, solos-iphone-v16-ai-recovery, solos-iphone-v17-reliable-answers, solos-iphone-v18-auto-rearm-wake, solos-iphone-v19-live-clock-date]
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,6 +25,11 @@ jobs:
       - name: Generate Xcode project
         working-directory: SolosDirectiOS
         run: xcodegen generate
+      - name: Verify live phone clock and date intent routing
+        working-directory: SolosDirectiOS
+        run: |
+          xcrun swiftc -parse-as-library Sources/JarvisLiveClock.swift Tests/LiveClockSmoke.swift -o /tmp/solos-live-clock-tests
+          /tmp/solos-live-clock-tests
       - name: Build unsigned iOS app
         working-directory: SolosDirectiOS
         run: |
