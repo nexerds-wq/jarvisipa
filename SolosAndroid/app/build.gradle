@@ -2,9 +2,20 @@ plugins { id 'com.android.application' }
 android {
   namespace 'com.solos.legacyhud'
   compileSdk 35
-  defaultConfig { applicationId 'com.solos.legacyhud'; minSdk 23; targetSdk 35; versionCode 2; versionName '2.0-offline' }
+  defaultConfig {
+    applicationId 'com.solos.legacyhud'
+    minSdk 23
+    targetSdk 28
+    versionCode 3
+    versionName '3.0-local-jarvis'
+    ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
+    externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_shared' } }
+  }
   compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+  externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt'; version '3.22.1' } }
+  packagingOptions { jniLibs { useLegacyPackaging true } }
 }
 dependencies {
   implementation 'com.google.mlkit:translate:17.0.3'
+  implementation 'com.alphacephei:vosk-android:0.3.47'
 }
