@@ -24,11 +24,14 @@ struct AskJarvisIntent: AppIntent {
         guard !prompt.isEmpty else {
             return .result(dialog: IntentDialog("What would you like to know?"))
         }
+        if let liveAnswer = JarvisLiveClock.answer(for: prompt) {
+            return .result(dialog: IntentDialog("\(liveAnswer)"))
+        }
         guard SystemLanguageModel.default.isAvailable else {
             return .result(dialog: IntentDialog("The offline Jarvis model isn't available. Enable Apple Intelligence in iPhone Settings and download its model."))
         }
         do {
-            let session = LanguageModelSession(instructions: "You are Jarvis, a concise and helpful private iPhone smart glasses assistant. Respond in one or two spoken sentences. Do not invent live information. Be clear and accurate.")
+            let session = LanguageModelSession(instructions: "You are Jarvis, a concise and helpful private iPhone smart glasses assistant. Respond in one or two spoken sentences. Do not invent live information. Be clear and accurate. " + JarvisLiveClock.modelTimeContext())
             let result = try await session.respond(to: prompt)
             return .result(dialog: IntentDialog("\(String(result.content.prefix(600)))"))
         } catch {
