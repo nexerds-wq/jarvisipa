@@ -218,10 +218,16 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     self.aiStatus = "Answered locally (no AI API key or computer)"
                     self.accessory.sendHUD(result.content)
                     if UserDefaults.standard.object(forKey: "jarvisSpeakAnswers") as? Bool ?? true {
+                        // Stop microphone capture before playback: the recognition session
+                        // otherwise keeps the audio route in record mode on some iPhones.
+                        let shouldResume = self.continuousWakeWanted
+                        self.stopListening()
+                        self.continuousWakeWanted = shouldResume
                         do {
                             let audio = AVAudioSession.sharedInstance()
-                            try audio.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-                            try audio.setActive(true)
+                            try audio.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .allowBluetoothA2DP])
+                            try audio.setActive(true, options: .notifyOthersOnDeactivation)
+                            self.voiceStatus = "Speaking Jarvis answer through " + self.accessory.audioRoute
                         } catch {
                             self.voiceStatus = "Spoken audio route: \(error.localizedDescription)"
                         }
