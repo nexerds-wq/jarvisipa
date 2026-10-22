@@ -1,5 +1,8 @@
 import SwiftUI
 import MapKit
+import Translation
+import Contacts
+import ContactsUI
 
 @main
 struct SolosDirectApp: App {
@@ -31,6 +34,7 @@ struct SolosDirectHome: View {
     @ObservedObject private var accessory: SolosClassicManager
     @StateObject private var handsFree = SolosHandsFreeEngine()
     @StateObject private var navigation = SolosNavigationEngine()
+    @StateObject private var captions = OfflineCaptionService()
     init(phone: SolosPhoneController) {
         self.phone = phone
         self._accessory = ObservedObject(wrappedValue: phone.accessory)
@@ -43,6 +47,26 @@ struct SolosDirectHome: View {
     @AppStorage("jarvisScreenOffHUD") private var screenOffHUD = false
     @AppStorage("jarvisLockScreenWake") private var lockScreenWake = false
     @AppStorage("jarvisWikipediaFallback") private var wikipediaFallback = false
+    @AppStorage("solosTranslationSourceLocale") private var sourceLocale = "es-ES"
+    private let sourceOptions: [(code:String,name:String)] = [
+        ("es-ES","Spanish"),("fr-FR","French"),("de-DE","German"),
+        ("it-IT","Italian"),("pt-BR","Portuguese"),("ja-JP","Japanese"),
+        ("ko-KR","Korean"),("zh-CN","Mandarin Chinese"),("en-US","English")
+    ]
+    @State private var hudConfigured = false
+    @State private var captionText = ""
+    @State private var translatedText = ""
+    @State private var translationPending = ""
+    @State private var translationConfiguration: TranslationSession.Configuration?
+    @State private var messageSender = "NEW MESSAGE"
+    @State private var messageBody = ""
+    @State private var messagePhoto: UIImage?
+    @State private var messagePages = ["NO MESSAGE YET"]
+    @State private var currentMessagePage = 0
+    @State private var messageRotationID = UUID()
+    @State private var showContactPicker = false
+    @State private var contactsStatus = ""
+
     @State private var lastDashboardMinute = ""
     @State private var page = 0
     @State private var lastOledMessage = ""
@@ -74,6 +98,9 @@ struct SolosDirectHome: View {
                     }.padding(14)
                         .background(Color(red:0.045,green:0.095,blue:0.12),in:RoundedRectangle(cornerRadius:14))
                     handsFreeCard
+                    captionCard
+                    translationCard
+                    messageCard
                     navigationCard
                     SolosAccessoryCard(manager: phone.accessory)
                     VStack(alignment: .leading, spacing: 9) {
@@ -208,18 +235,47 @@ struct SolosDirectHome: View {
             .background(Color(red: 0.02, green: 0.055, blue: 0.075))
             .navigationTitle("SOLOS DIRECT")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented:$showContactPicker) {
+                SolosMessageContactPicker { name, photo in
+                    messageSender = name
+                    messagePhoto = photo
+                }
+            }
+            .onOpenURL { url in acceptIncomingMessageURL(url) }
+            .translationTask(translationConfiguration) { session in
+                let original = translationPending
+                guard handsFree.mode == 3, !original.isEmpty else { return }
+                do {
+                    try await session.prepareTranslation()
+                    let result = try await session.translate(original)
+                    await MainActor.run {
+                        guard handsFree.mode == 3, translationPending == original else { return }
+                        translatedText = result.targetText
+                        sendModeHUD(3)
+                    }
+                } catch {
+                    await MainActor.run {
+                        guard handsFree.mode == 3, translationPending == original else { return }
+                        translatedText = "Translation unavailable: " + error.localizedDescription
+                        sendModeHUD(3)
+                    }
+                }
+            }
+            .onChange(of: sourceLocale) { _, _ in
+                if handsFree.mode == 3 { beginCaptions(mode:3) }
+            }
             .onAppear {
                 configureHandsFree()
-                if lockScreenWake && !phone.listening { phone.startListening() }
+                if lockScreenWake && handsFree.mode != 2 && handsFree.mode != 3 && !phone.listening { phone.startListening() }
             }
             .onChange(of: accessory.connectedProtocol) { _, proto in
                 if !proto.isEmpty {
                     navigation.enableBackgroundDashboard(screenOffHUD)
-                    if autoDashboard { sendModeHUD(handsFree.mode) }
+                    sendModeHUD(handsFree.mode)
                 }
             }
             .onChange(of: phone.aiStatus) { _, status in
-                guard status.hasPrefix("Answered "), !phone.aiAnswer.isEmpty else { return }
+                guard status.hasPrefix("Answered "), !phone.aiAnswer.isEmpty, handsFree.mode != 4 else { return }
                 showAnswerOnGlasses(phone.aiAnswer)
             }
             .onChange(of: phone.now) { _, time in
@@ -247,7 +303,7 @@ struct SolosDirectHome: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(index * 7)) {
                 guard answerDisplayID == generation else { return }
                 lensAnswerPage = page
-                sendModeHUD(2, message:page, detail:"JARVIS • PAGE \(index + 1)/\(pages.count)")
+                sendModeHUD(5, message:page, detail:"JARVIS • PAGE \(index + 1)/\(pages.count)")
             }
         }
         DispatchQueue.main.asyncAfter(deadline:.now()+Double(pages.count * 7 + 5)) {
@@ -268,17 +324,31 @@ struct SolosDirectHome: View {
         sendModeHUD(0)
     }
     private func configureHandsFree() {
+        guard !hudConfigured else { return }
+        hudConfigured = true
         handsFree.enableMediaButtons()
         navigation.enableBackgroundDashboard(screenOffHUD)
         accessory.onAccessoryPacket = { packet in
             handsFree.input(packet)
         }
         handsFree.onModeChange = { selected in
-            answerDisplayID = UUID()
-            lensAnswerPage = ""
-            answerShowingUntil = .distantPast
-            if selected == 0 { phone.refreshSensors() }
-            sendModeHUD(selected)
+            enterHUDMode(selected)
+        }
+        handsFree.onLanguageButton = {
+            nextTranslationLanguage()
+        }
+        captions.onSubtitle = { words in
+            captionText = words
+            if handsFree.mode == 2 {
+                sendModeHUD(2)
+            } else if handsFree.mode == 3 {
+                requestTranslation(words)
+            }
+        }
+        captions.onFinal = { words in
+            captionText = words
+            if handsFree.mode == 2 { sendModeHUD(2) }
+            if handsFree.mode == 3 { requestTranslation(words) }
         }
         navigation.onUpdate = { if handsFree.mode == 1 && Date() >= answerShowingUntil { sendModeHUD(1) } }
         navigation.onBackgroundTick = {
@@ -287,22 +357,43 @@ struct SolosDirectHome: View {
                 sendModeHUD(0)
             }
         }
-        if autoDashboard && !accessory.connectedProtocol.isEmpty {
+        if handsFree.mode == 2 || handsFree.mode == 3 {
+            beginCaptions(mode:handsFree.mode)
+        }
+        if !accessory.connectedProtocol.isEmpty {
             sendModeHUD(handsFree.mode)
         }
     }
     private func sendModeHUD(_ mode: Int, message: String = "", detail: String = "") {
         guard !accessory.connectedProtocol.isEmpty else { return }
         let navMessage = navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining
-        let view = SolosProHUD.image(mode: mode,
-            clock: phone.clock, date: phone.dateLine,
-            steps: Int(phone.steps) ?? 0, distance: phone.distance,
-            speed: phone.speed, battery: phone.battery,
-            gps: phone.coordinates, message: mode == 1 ? navMessage : message,
-            detail: detail.isEmpty ? "SOLOS • \(mode + 1)/2 • VOICE NAV" : detail)
-        accessory.sendHUDImage(view, priority: mode == 2)
-        lastOledMessage = message
+        let body: String
+        switch mode {
+        case 1: body = navMessage
+        case 2: body = captionText
+        case 3: body = translatedText
+        case 4: body = messagePages[min(currentMessagePage,messagePages.count - 1)]
+        default: body = message
+        }
+        let sourceName = sourceOptions.first(where:{$0.code == sourceLocale})?.name ?? sourceLocale
+        let footer: String
+        switch mode {
+        case 2: footer = "SPEECH • ENGLISH • LIVE"
+        case 3: footer = sourceName.uppercased() + " TO ENGLISH • LIVE"
+        case 4: footer = "MESSAGE FROM SHORTCUT / PASTE"
+        default: footer = "SOLOS • \(mode + 1)/5"
+        }
+        let view = SolosProHUD.image(mode:mode,
+            clock:phone.clock,date:phone.dateLine,
+            steps:Int(phone.steps) ?? 0,distance:phone.distance,
+            speed:phone.speed,battery:phone.battery,gps:phone.coordinates,
+            message:body,detail:detail.isEmpty ? footer : detail,
+            sender:messageSender,senderPhoto:messagePhoto,
+            messagePage:currentMessagePage + 1,pageCount:messagePages.count)
+        accessory.sendHUDImage(view,priority:mode == 4 || mode == 5)
+        lastOledMessage = body
     }
+
     private var navigationCard: some View {
         VStack(alignment:.leading,spacing:12) {
             Label("APPLE MAPS • SPOKEN DIRECTIONS",systemImage:"map.fill")
