@@ -53,6 +53,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var lockWatchdog: Timer?
     private var timer: Timer?
     private var lastPedometerDay = Calendar.current.startOfDay(for: Date())
+    private var lastDashboardGPSUIAt = Date.distantPast
     private var asking = false
 
     override init() {
@@ -121,6 +122,10 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         }
         location.delegate = self
         location.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        // Dashboard GPS is a glanceable status, not turn-by-turn tracking.
+        // Avoid a permanent per-second GPS stream and full SwiftUI refreshes.
+        location.distanceFilter = 25
+        location.pausesLocationUpdatesAutomatically = true
         central = CBCentralManager(delegate: self, queue: nil)
         // A once-per-second @Published clock forced SwiftUI to rebuild the
         // entire dashboard, previews and encoder 60 times each minute.
@@ -211,13 +216,12 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             motionStatus = "Waiting for today's step data."
             return
         }
-        steps = data.numberOfSteps.stringValue
-        if let meters = data.distance?.doubleValue {
-            distance = String(format: "%.2f mi", meters / 1609.344)
-        } else {
-            distance = "N/A"
-        }
-        motionStatus = "Steps are from today's iPhone motion history."
+        let stepValue = data.numberOfSteps.stringValue
+        if steps != stepValue { steps = stepValue }
+        let distanceValue = data.distance.map { String(format:"%.2f mi",$0.doubleValue / 1609.344) } ?? "N/A"
+        if distance != distanceValue { distance = distanceValue }
+        let newStatus = "Steps are from today's iPhone motion history."
+        if motionStatus != newStatus { motionStatus = newStatus }
     }
     private func refreshLocationPermission() {
         guard CLLocationManager.locationServicesEnabled() else {
@@ -241,9 +245,17 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let item = locations.last else { return }
-        coordinates = String(format: "GPS %.4f, %.4f", item.coordinate.latitude, item.coordinate.longitude)
-        locationStatus = String(format: "GPS accuracy: ±%.0f m", max(0, item.horizontalAccuracy))
-        speed = item.speed >= 0 ? String(format: "%.1f mph", item.speed * 2.236936) : "–"
+        // SolosNavigationEngine owns the higher-frequency navigation GPS.
+        // Updating 3 separate @Published properties on every stationary
+        // dashboard fix caused unnecessary full-screen re-diffs.
+        guard Date().timeIntervalSince(lastDashboardGPSUIAt) >= 10 else { return }
+        lastDashboardGPSUIAt = Date()
+        let gps = String(format:"GPS %.4f, %.4f",item.coordinate.latitude,item.coordinate.longitude)
+        let accuracy = String(format:"GPS accuracy: ±%.0f m",max(0,item.horizontalAccuracy))
+        let mph = item.speed >= 0 ? String(format:"%.1f mph",item.speed * 2.236936) : "–"
+        if gps != coordinates { coordinates = gps }
+        if accuracy != locationStatus { locationStatus = accuracy }
+        if mph != speed { speed = mph }
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         coordinates = "GPS: unavailable"
