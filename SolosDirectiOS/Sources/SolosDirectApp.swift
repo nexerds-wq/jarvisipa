@@ -14,15 +14,23 @@ struct SolosDirectApp: App {
 
 struct SolosDirectHome: View {
     @ObservedObject var phone: SolosPhoneController
+    @ObservedObject private var accessory: SolosClassicManager
+    init(phone: SolosPhoneController) {
+        self.phone = phone
+        self._accessory = ObservedObject(wrappedValue: phone.accessory)
+    }
     @State private var question = "Hey Jarvis, what is a black hole?"
     @State private var customHUD = "HELLO FROM IPHONE"
-    @AppStorage("solosFlip180") private var flip180 = false
+    @AppStorage("solosOrientationMode") private var orientationMode = 0
+    @State private var autoDashboard = false
+    @State private var lastDashboardMinute = ""
     @State private var page = 0
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
+                    SolosAccessoryCard(manager: phone.accessory)
                     VStack(alignment: .leading, spacing: 9) {
                         Text("IPHONE OFFLINE JARVIS").font(.headline).foregroundStyle(.mint)
                         Text(phone.aiStatus).font(.caption).foregroundStyle(.secondary)
@@ -60,23 +68,47 @@ struct SolosDirectHome: View {
                         HStack {
                             Label("\(phone.steps) steps", systemImage: "figure.walk")
                             Spacer()
+                            Label(phone.distance, systemImage: "map")
+                        }.font(.subheadline)
+                        HStack {
+                            Label(phone.battery, systemImage: "battery.100percent")
+                            Spacer()
                             Label(phone.speed, systemImage: "location")
                         }.font(.subheadline)
-                        Text(phone.coordinates).font(.caption).foregroundStyle(.secondary)
-                        Button("DISPLAY DASHBOARD ON SOLOS") { phone.accessory.sendHUD(phone.dashboard) }
-                            .buttonStyle(.bordered)
+                        Text(phone.coordinates).font(.caption).foregroundStyle(.mint)
+                        Text(phone.motionStatus).font(.caption2).foregroundStyle(.secondary)
+                        Text(phone.locationStatus).font(.caption2).foregroundStyle(.secondary)
+                        Toggle("LIVE HUD: refresh on lens each minute", isOn: $autoDashboard)
+                            .tint(.mint)
+                            .onChange(of: autoDashboard) { _, enabled in
+                                if enabled { sendDashboard() }
+                            }
+                        HStack {
+                            Button("SEND DASHBOARD") { sendDashboard() }
+                                .buttonStyle(.borderedProminent).tint(.mint)
+                            Button("REFRESH SENSORS") { phone.refreshSensors() }
+                                .buttonStyle(.bordered)
+                        }
+                        Text("GPS needs Location permission; daily steps and distance need Motion & Fitness permission. Live updates run while this app is open.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }.card()
-                    SolosAccessoryCard(manager: phone.accessory)
                     StableExtrasView(phone: phone)
                     VStack(alignment: .leading, spacing: 8) {
                         Text("TEST CUSTOM HUD — ORIGINAL V4 CONNECTION").font(.headline).foregroundStyle(.mint)
-                        Toggle("ROTATE GLASSES DISPLAY 180°", isOn: $flip180)
-                            .tint(.mint)
-                        Text(flip180
-                            ? "Correction ON: inverted image. Connection and packet headers unchanged."
-                            : "Correction OFF: identical original V4 display encoding.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Text("Correct upside-down AND mirrored letters independently. Start with V4 Original, then try each correction.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Picker("Lens image orientation", selection: $orientationMode) {
+                            Text("0 • V4 ORIGINAL").tag(0)
+                            Text("1 • ROTATE 180°").tag(1)
+                            Text("2 • MIRROR LEFT/RIGHT").tag(2)
+                            Text("3 • FLIP TOP/BOTTOM").tag(3)
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.mint)
+                        Button("SEND ORIENTATION TEST — ABC 123 →") {
+                            phone.accessory.sendHUD("TOP ABC 123 >\nLEFT > RIGHT\nBOTTOM 789")
+                        }
+                        .buttonStyle(.borderedProminent).tint(.mint)
                         TextField("Text for Solos display", text: $customHUD, axis: .vertical)
                             .textFieldStyle(.roundedBorder)
                         Button("SEND 428 × 240 RLE565 IMAGE") { phone.accessory.sendHUD(customHUD) }
@@ -106,7 +138,28 @@ struct SolosDirectHome: View {
             .background(Color(red: 0.02, green: 0.055, blue: 0.075))
             .navigationTitle("SOLOS DIRECT")
             .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: phone.now) { _, time in
+                guard autoDashboard, !accessory.connectedProtocol.isEmpty else { return }
+                let stamp = String(Calendar.current.component(.year, from: time)) + "-" +
+                            String(Calendar.current.component(.month, from: time)) + "-" +
+                            String(Calendar.current.component(.day, from: time)) + "-" +
+                            String(Calendar.current.component(.hour, from: time)) + ":" +
+                            String(Calendar.current.component(.minute, from: time))
+                if stamp != lastDashboardMinute {
+                    lastDashboardMinute = stamp
+                    accessory.sendHUD(phone.dashboard)
+                }
+            }
         }
+    }
+    private func sendDashboard() {
+        phone.refreshSensors()
+        lastDashboardMinute = String(Calendar.current.component(.year, from: Date())) + "-" +
+                              String(Calendar.current.component(.month, from: Date())) + "-" +
+                              String(Calendar.current.component(.day, from: Date())) + "-" +
+                              String(Calendar.current.component(.hour, from: Date())) + ":" +
+                              String(Calendar.current.component(.minute, from: Date()))
+        accessory.sendHUD(phone.dashboard)
     }
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
