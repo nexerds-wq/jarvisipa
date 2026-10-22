@@ -11,9 +11,9 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Check Xcode
+      - name: Select Xcode 26.3 for iOS Foundation Models
         run: |
-          ls -1 /Applications | grep Xcode
+          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
           xcodebuild -version
       - name: Install XcodeGen
         run: |
