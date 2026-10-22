@@ -175,6 +175,12 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         }
     }
 
+    var isSpeaking: Bool { speaker.isSpeaking }
+
+    func interruptSpeech() {
+        if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
+    }
+
     func speak(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
