@@ -16,6 +16,7 @@ struct SolosDirectHome: View {
     @ObservedObject var phone: SolosPhoneController
     @State private var question = "Hey Jarvis, what is a black hole?"
     @State private var customHUD = "HELLO FROM IPHONE"
+    @AppStorage("solosFlip180") private var flip180 = false
     @State private var page = 0
     var body: some View {
         NavigationStack {
@@ -67,7 +68,14 @@ struct SolosDirectHome: View {
                     }.card()
                     SolosAccessoryCard(manager: phone.accessory)
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("TEST CUSTOM HUD").font(.headline).foregroundStyle(.mint)
+                        Text("TEST CUSTOM HUD — ORIGINAL V4 CONNECTION").font(.headline).foregroundStyle(.mint)
+                        Toggle("ROTATE GLASSES DISPLAY 180°", isOn: $flip180)
+                            .tint(.mint)
+                        Text(flip180
+                            ? "Correction ON: inverted image. Connection and packet headers unchanged."
+                            : "Correction OFF: identical original V4 display encoding.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         TextField("Text for Solos display", text: $customHUD, axis: .vertical)
                             .textFieldStyle(.roundedBorder)
                         Button("SEND 428 × 240 RLE565 IMAGE") { phone.accessory.sendHUD(customHUD) }
