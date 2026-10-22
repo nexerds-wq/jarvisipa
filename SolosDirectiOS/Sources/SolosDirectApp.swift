@@ -42,6 +42,7 @@ struct SolosDirectHome: View {
     @AppStorage("jarvisSpeakAnswers") private var jarvisSpeakAnswers = true
     @AppStorage("jarvisScreenOffHUD") private var screenOffHUD = false
     @AppStorage("jarvisLockScreenWake") private var lockScreenWake = false
+    @AppStorage("jarvisWikipediaFallback") private var wikipediaFallback = false
     @State private var lastDashboardMinute = ""
     @State private var page = 0
     @State private var lastOledMessage = ""
@@ -76,7 +77,11 @@ struct SolosDirectHome: View {
                     navigationCard
                     SolosAccessoryCard(manager: phone.accessory)
                     VStack(alignment: .leading, spacing: 9) {
-                        Text("IPHONE OFFLINE JARVIS").font(.headline).foregroundStyle(.mint)
+                        Text("JARVIS • AI + OPTIONAL FACT LOOKUP").font(.headline).foregroundStyle(.mint)
+                        Toggle("ALLOW ONLINE WIKIPEDIA FACTUAL FALLBACK",isOn:$wikipediaFallback)
+                            .tint(.mint)
+                        Text("Optional: If Apple's offline model fails, factual questions can be sent to Wikipedia over HTTPS. Requires internet; not a general AI service. Off by default for privacy.")
+                            .font(.caption2).foregroundStyle(.secondary)
                         Text(phone.aiStatus).font(.caption).foregroundStyle(.secondary)
                         TextEditor(text: $question)
                             .frame(minHeight: 90)
@@ -214,7 +219,7 @@ struct SolosDirectHome: View {
                 }
             }
             .onChange(of: phone.aiStatus) { _, status in
-                guard status.hasPrefix("Answered locally"), !phone.aiAnswer.isEmpty else { return }
+                guard status.hasPrefix("Answered "), !phone.aiAnswer.isEmpty else { return }
                 showAnswerOnGlasses(phone.aiAnswer)
             }
             .onChange(of: phone.now) { _, time in
@@ -407,7 +412,7 @@ struct SolosDirectHome: View {
             Text("SOLOS  /  iPHONE")
                 .font(.system(.title2, design: .monospaced).bold())
                 .foregroundStyle(.mint)
-            Text("V12: Jarvis OLED answers • Spoken replies • Experimental locked-screen voice.")
+            Text("V17: AI error diagnostics • Optional Wikipedia answers • Spoken OLED HUD.")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .padding(.vertical, 10)
