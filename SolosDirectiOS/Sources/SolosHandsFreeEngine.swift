@@ -160,8 +160,8 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
            data.count == pattern.packetLength,
            pattern.bytes.count == pattern.mask.count,
            pattern.bytes.count <= data.count,
-           zip(zip(pattern.bytes,pattern.mask),data).allSatisfy({
-               (($0.0.0 ^ $0.1) & $0.0.1) == 0
+           (0..<pattern.bytes.count).allSatisfy({ index in
+               ((pattern.bytes[index] ^ data[index]) & pattern.mask[index]) == 0
            }),
            Date().timeIntervalSince(lastAccessoryInput) > 0.6 {
             lastAccessoryInput = Date()
