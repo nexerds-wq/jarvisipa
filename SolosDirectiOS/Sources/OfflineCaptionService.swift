@@ -28,20 +28,29 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var generation = 0
 
     func start(locale: String, name: String) {
-        if desired { stop() }
+        stop()
+        desired = true
         localeCode = locale
         recognizedLanguage = name
+        status = "Initializing live captions for \(name)..."
+        let expected = generation
         SFSpeechRecognizer.requestAuthorization { [weak self] auth in
             DispatchQueue.main.async {
-                guard let self else { return }
-                if auth != .authorized {
+                guard let self, self.desired, self.generation == expected else { return }
+                guard auth == .authorized else {
+                    self.desired = false
                     self.status = "Speech permission denied. Allow Speech Recognition in Settings."
                     return
                 }
-                AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
                     DispatchQueue.main.async {
-                        guard granted else { self.status = "Microphone permission denied"; return }
-                        self.desired = true
+                        guard let self, self.desired,
+                              self.generation == expected else { return }
+                        guard granted else {
+                            self.desired = false
+                            self.status = "Microphone permission denied"
+                            return
+                        }
                         self.recognize()
                     }
                 }
@@ -66,7 +75,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         request = next
         do {
             let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.record, mode: .measurement, options: [.duckOthers])
+            try audio.setCategory(.record, mode: .measurement, options: [])
             try audio.setActive(true, options: [])
             let input = engine.inputNode
             let format = input.outputFormat(forBus: 0)
