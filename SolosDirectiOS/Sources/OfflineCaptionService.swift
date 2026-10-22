@@ -1,18 +1,22 @@
-import SwiftUI
+import Foundation
 import Combine
 import Speech
 import AVFoundation
 
-/// iOS on-device speech recognition. Audio isn't sent to cloud services.
-/// Speech language packs and locale support vary by OS/device.
+/// Runs a real microphone -> Speech -> subtitle pipeline. The glasses image
+/// renderer is separate: a connected OLED alone does NOT prove transcription.
+/// On-device speech is preferred; online speech is used only with explicit
+/// user opt-in when an offline language recognizer is unavailable.
 final class OfflineCaptionService: NSObject, ObservableObject {
     @Published var isListening = false
-    @Published var status = "Tap Start for fully offline captions"
+    @Published var status = "Select CAPTIONS HUD to activate microphone"
     @Published var partial = ""
     @Published var latestFinal = ""
     @Published var history = [String]()
     @Published var localeCode = "en-US"
     @Published var recognizedLanguage = "English"
+    @Published var audioBuffers = 0
+    @Published var recognizerMode = "Not started"
 
     var onSubtitle: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
@@ -24,144 +28,246 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var restartTask: DispatchWorkItem?
     private var desired = false
     private var starting = false
+    private var onDeviceOnly = true
     private var lastDisplay = Date.distantPast
     private var generation = 0
     private var tapInstalled = false
+    private var observerTokens = [NSObjectProtocol]()
+    private var failureCount = 0
+    private var lastRestart = Date.distantPast
+    private var buffersCaptured = 0
 
-    func start(locale: String, name: String) {
+    override init() {
+        super.init()
+        let notifications = NotificationCenter.default
+        observerTokens.append(notifications.addObserver(
+            forName:AVAudioSession.interruptionNotification,
+            object:AVAudioSession.sharedInstance(),queue:.main) { [weak self] note in
+            guard let self, self.desired else { return }
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            if raw == AVAudioSession.InterruptionType.began.rawValue {
+                self.generation += 1
+                self.restartTask?.cancel()
+                self.cleanup()
+                self.status = "Mic interrupted by iOS; resuming when available"
+            } else if raw == AVAudioSession.InterruptionType.ended.rawValue {
+                self.scheduleRestart(reason:"Microphone interruption ended")
+            }
+        })
+        observerTokens.append(notifications.addObserver(
+            forName:AVAudioSession.routeChangeNotification,
+            object:AVAudioSession.sharedInstance(),queue:.main) { [weak self] _ in
+            guard let self, self.desired else { return }
+            // Route changes can invalidate AVAudioEngine's input format.
+            self.scheduleRestart(reason:"Microphone route changed")
+        })
+        observerTokens.append(notifications.addObserver(
+            forName:Notification.Name.AVAudioEngineConfigurationChange,
+            object:engine,queue:.main) { [weak self] _ in
+            guard let self, self.desired else { return }
+            self.scheduleRestart(reason:"Audio configuration changed")
+        })
+    }
+
+    /// Setting allowOnlineRecognition true allows Speech to use Apple's network
+    /// recognition when on-device recognition is not supported for the language.
+    func start(locale:String, name:String, allowOnlineRecognition:Bool = false) {
         stop()
         desired = true
         localeCode = locale
         recognizedLanguage = name
-        status = "Initializing live captions for \(name)..."
+        onDeviceOnly = !allowOnlineRecognition
+        status = "Requesting microphone + Speech permissions for \(name)..."
         let expected = generation
         SFSpeechRecognizer.requestAuthorization { [weak self] auth in
             DispatchQueue.main.async {
                 guard let self, self.desired, self.generation == expected else { return }
                 guard auth == .authorized else {
                     self.desired = false
-                    self.status = "Speech permission denied. Allow Speech Recognition in Settings."
+                    self.status = "Speech Recognition permission denied. Enable it in iPhone Settings."
                     return
                 }
                 AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
                     DispatchQueue.main.async {
-                        guard let self, self.desired,
-                              self.generation == expected else { return }
+                        guard let self, self.desired, self.generation == expected else { return }
                         guard granted else {
                             self.desired = false
-                            self.status = "Microphone permission denied"
+                            self.status = "Microphone permission denied. Enable it in iPhone Settings."
                             return
                         }
-                        self.recognize()
+                        self.beginRecognition()
                     }
                 }
             }
         }
     }
-    private func recognize() {
-        guard desired, !starting else { return }
-        let speech = SFSpeechRecognizer(locale: Locale(identifier: localeCode))
-        guard let speech, speech.isAvailable, speech.supportsOnDeviceRecognition else {
-            status = "No OFFLINE speech pack for \(recognizedLanguage) on this phone. Try another language or check iOS language settings."
+
+    private func beginRecognition() {
+        guard desired, !starting, !isListening else { return }
+        guard let speech = SFSpeechRecognizer(locale:Locale(identifier:localeCode)) else {
+            status = "Speech does not support locale \(localeCode). Choose another source language."
             desired = false
-            isListening = false
             return
         }
+        guard speech.isAvailable else {
+            // If speech service is temporarily unavailable, show the reason.
+            // Do not repeatedly start an invalid recording loop.
+            status = "iOS Speech recognizer unavailable for \(recognizedLanguage). Check language and network."
+            desired = false
+            return
+        }
+        let offline = speech.supportsOnDeviceRecognition
+        guard offline || !onDeviceOnly else {
+            recognizerMode = "Offline language model missing"
+            status = "No on-device \(recognizedLanguage) recognizer. Enable ALLOW ONLINE SPEECH and retry, or install a supported language."
+            desired = false
+            return
+        }
+
         starting = true
         recognizer = speech
-        let next = SFSpeechAudioBufferRecognitionRequest()
-        next.shouldReportPartialResults = true
-        next.requiresOnDeviceRecognition = true
-        next.contextualStrings = ["Hey Jarvis", "Jarvis", "caption", "translate"]
-        request = next
+        recognizerMode = offline ? "On-device speech" : "Online speech (consented)"
+        let captureRequest = SFSpeechAudioBufferRecognitionRequest()
+        captureRequest.shouldReportPartialResults = true
+        captureRequest.requiresOnDeviceRecognition = offline
+        request = captureRequest
+
         do {
             let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.record, mode: .measurement, options: [])
-            try audio.setActive(true, options: [])
+            try audio.setCategory(.playAndRecord,mode:.default,
+                                  options:[.defaultToSpeaker,.allowBluetooth])
+            try audio.setActive(true)
             let input = engine.inputNode
-            let format = input.outputFormat(forBus: 0)
-            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-                next.append(buffer)
+            let format = input.outputFormat(forBus:0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                starting = false
+                cleanup()
+                scheduleRestart(reason:"Microphone input has no usable audio format")
+                return
+            }
+            if tapInstalled {
+                input.removeTap(onBus:0)
+                tapInstalled = false
+            }
+            input.installTap(onBus:0,bufferSize:1024,format:format) { [weak self] buffer, _ in
+                captureRequest.append(buffer)
+                guard let self else { return }
+                self.buffersCaptured += 1
+                if self.buffersCaptured % 45 == 0 {
+                    let count = self.buffersCaptured
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.desired else { return }
+                        self.audioBuffers = count
+                    }
+                }
             }
             tapInstalled = true
             engine.prepare()
             try engine.start()
             isListening = true
-            status = "ON DEVICE • \(recognizedLanguage) • listening"
-            let sequence = generation
+            starting = false
+            failureCount = 0
+            status = "\(recognizerMode) • MIC ACTIVE • \(recognizedLanguage)"
+            let current = generation
+            // Recognition sessions can expire. Rotate proactively so the
+            // listener keeps working while the HUD remains selected.
             DispatchQueue.main.asyncAfter(deadline:.now()+48) { [weak self] in
-                guard let self, self.desired, sequence == self.generation else { return }
-                self.reboot()
+                guard let self, self.desired, self.generation == current else { return }
+                self.scheduleRestart(reason:"Rotating 48-second speech session")
             }
-            task = speech.recognitionTask(with: next) { [weak self] result, error in
+            task = speech.recognitionTask(with:captureRequest) { [weak self] result, error in
                 DispatchQueue.main.async {
-                    guard let self, self.desired, sequence == self.generation else { return }
+                    guard let self, self.desired, self.generation == current else { return }
                     if let result {
-                        let words = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let words = result.bestTranscription.formattedString
+                            .trimmingCharacters(in:.whitespacesAndNewlines)
                         if !words.isEmpty {
                             self.partial = words
-                            // Limit Bluetooth updates: the glasses are a small, slow display.
-                            if Date().timeIntervalSince(self.lastDisplay) > 1.15 {
+                            if Date().timeIntervalSince(self.lastDisplay) >= 0.7 {
                                 self.lastDisplay = Date()
                                 self.onSubtitle?(words)
                             }
-                        }
-                        if result.isFinal {
-                            if !words.isEmpty {
+                            if result.isFinal {
                                 self.latestFinal = words
                                 self.history.append(words)
-                                if self.history.count > 40 { self.history.removeFirst() }
+                                if self.history.count > 50 { self.history.removeFirst() }
                                 self.onFinal?(words)
                             }
-                            self.reboot()
+                        }
+                        if result.isFinal {
+                            self.scheduleRestart(reason:"Caption utterance completed")
                             return
                         }
                     }
-                    if error != nil { self.reboot() }
+                    if let error {
+                        self.status = "Speech error: \(error.localizedDescription)"
+                        self.scheduleRestart(reason:"Speech recognizer stopped")
+                    }
                 }
             }
-            starting = false
         } catch {
             starting = false
-            desired = false
             cleanup()
-            status = "Audio setup failed: \(error.localizedDescription)"
+            scheduleRestart(reason:"Audio start failed: \(error.localizedDescription)")
         }
     }
-    private func reboot() {
+
+    private func scheduleRestart(reason:String) {
         guard desired else { return }
-        cleanup()
+        guard Date().timeIntervalSince(lastRestart) >= 0.4 else { return }
+        lastRestart = Date()
         generation += 1
-        status = "Restarting offline speech listener..."
         restartTask?.cancel()
-        let job = DispatchWorkItem { [weak self] in self?.recognize() }
+        cleanup()
+        failureCount += 1
+        let delay = min(5.0,0.9 + Double(failureCount) * 0.45)
+        status = "\(reason). Reconnecting mic..."
+        let expected = generation
+        let job = DispatchWorkItem { [weak self] in
+            guard let self, self.desired, self.generation == expected else { return }
+            self.beginRecognition()
+        }
         restartTask = job
-        DispatchQueue.main.asyncAfter(deadline: .now()+0.65, execute: job)
+        DispatchQueue.main.asyncAfter(deadline:.now()+delay,execute:job)
     }
+
     private func cleanup() {
         if engine.isRunning { engine.stop() }
         if tapInstalled {
-            engine.inputNode.removeTap(onBus: 0)
+            engine.inputNode.removeTap(onBus:0)
             tapInstalled = false
         }
-        request?.endAudio()
+        // Invalidate the task before ending audio to avoid stale callbacks
+        // from previous speech sessions.
         task?.cancel()
         task = nil
+        request?.endAudio()
         request = nil
         isListening = false
+        starting = false
     }
+
     func stop() {
         desired = false
         generation += 1
         restartTask?.cancel()
         restartTask = nil
         cleanup()
-        status = "Offline captions stopped"
+        status = "Captions paused (mic released)"
+        recognizerMode = "Stopped"
     }
+
     func clear() {
         partial = ""
         latestFinal = ""
         history.removeAll()
     }
-    deinit { desired = false; restartTask?.cancel() }
+
+    deinit {
+        desired = false
+        restartTask?.cancel()
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
 }
