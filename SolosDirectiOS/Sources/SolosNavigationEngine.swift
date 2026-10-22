@@ -26,12 +26,22 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
     private var lastSpoken = ""
     private var lastAnnouncedDistance = Double.infinity
     private var recalculationAt = Date.distantPast
+    private var waitingForFirstGPS = false
+    private var recalculating = false
+    private var lastBackgroundTick = Date.distantPast
+    private var lastHUDUpdate = Date.distantPast
+    private var announcedStep = -1
+    private var lastThreshold = Int.max
+    var onBackgroundTick: (() -> Void)?
     var onUpdate: (() -> Void)?
     override init() {
         super.init()
         gps.delegate = self
         gps.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         gps.distanceFilter = 7
+        gps.activityType = .automotiveNavigation
+        gps.pausesLocationUpdatesAutomatically = false
+        gps.showsBackgroundLocationIndicator = true
     }
     func start() async {
         let text = address.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -45,7 +55,10 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
         }
         gps.startUpdatingLocation()
         guard let origin = gps.location?.coordinate else {
-            status = "Waiting for GPS fix. Try START again outdoors."; return
+            waitingForFirstGPS = true
+            gps.requestLocation()
+            status = "Waiting for accurate GPS. Route will start automatically..."
+            return
         }
         status = "Searching Apple Maps for " + text + "..."
         do {
@@ -73,17 +86,26 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
             status = "No driving route found."; return
         }
         route = best
+        if gps.authorizationStatus == .authorizedWhenInUse || gps.authorizationStatus == .authorizedAlways {
+            gps.allowsBackgroundLocationUpdates = true
+            gps.startUpdatingLocation()
+        }
+        prepareAudioForSpeech()
         steps = best.steps.filter { !$0.instructions.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty }
         currentIndex = 0
         lastSpoken = ""
         lastAnnouncedDistance = .infinity
+        announcedStep = -1
+        lastThreshold = Int.max
         active = true
         status = "Navigating to " + destination
         updateProgress(at: CLLocation(latitude:origin.latitude,longitude:origin.longitude), announce:true)
     }
     func stop() {
         active = false
+        waitingForFirstGPS = false
         gps.stopUpdatingLocation()
+        gps.allowsBackgroundLocationUpdates = false
         speaker.stopSpeaking(at:.immediate)
         status = "Navigation stopped."
         route = nil
@@ -99,67 +121,163 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
     func locationManager(_ manager: CLLocationManager,didUpdateLocations locations:[CLLocation]) {
         guard let location = locations.last, location.horizontalAccuracy >= 0 else { return }
         position = location.coordinate
-        if active { updateProgress(at:location,announce:true) }
+        if waitingForFirstGPS {
+            waitingForFirstGPS = false
+            Task { await self.start() }
+        }
+        if active {
+            updateProgress(at:location,announce:true)
+            if Date().timeIntervalSince(lastBackgroundTick) > 55 {
+                lastBackgroundTick = Date()
+                onBackgroundTick?()
+            }
+        }
     }
     func locationManager(_ manager: CLLocationManager,didFailWithError error:Error) {
         status = "GPS: " + error.localizedDescription
     }
-    private func updateProgress(at location:CLLocation,announce:Bool) {
+    private func updateProgress(at location:CLLocation, announce:Bool) {
         guard let route else { return }
-        let finish = target.map { CLLocation(latitude:$0.latitude,longitude:$0.longitude) }
-        let toFinish = finish.map { location.distance(from:$0) } ?? route.distance
-        remaining = toFinish >= 1609.344
-            ? String(format:"%.1f mi",toFinish/1609.344)
-            : String(format:"%.0f ft",toFinish*3.28084)
-        let expectedSpeed = max(2.0,location.speed >= 0 ? location.speed : route.distance/max(1,route.expectedTravelTime))
-        let seconds = toFinish / expectedSpeed
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        eta = formatter.string(from:Date().addingTimeInterval(seconds))
-        if toFinish < 35 {
+        let destinationLocation = target.map { CLLocation(latitude:$0.latitude,longitude:$0.longitude) }
+        let toDestination = destinationLocation.map { location.distance(from:$0) } ?? route.distance
+        if toDestination < 28 {
             instruction = "YOU HAVE ARRIVED"
-            nextTurn = "0 ft"
-            if lastSpoken != instruction { say(instruction); lastSpoken = instruction }
+            nextTurn = "0 FT"
+            remaining = "0 FT"
+            eta = DateFormatter.localizedString(from:Date(),dateStyle:.none,timeStyle:.short)
+            if lastSpoken != instruction { say("You have arrived at your destination."); lastSpoken = instruction }
             active = false
+            gps.stopUpdatingLocation()
+            gps.allowsBackgroundLocationUpdates = false
             onUpdate?()
             return
         }
+
+        // Project location onto the actual route polyline, not the straight-line
+        // distance to destination. This makes remaining distance and ETA road-based.
+        let projection = closestPoint(to:location.coordinate, on:route.polyline)
+        if projection.offRoute > 100 && Date().timeIntervalSince(recalculationAt) > 45 && !recalculating,
+           let target {
+            recalculationAt = Date()
+            recalculating = true
+            status = "Off route. Recalculating..."
+            let destinationItem = MKMapItem(placemark:MKPlacemark(coordinate:target))
+            Task {
+                defer { recalculating = false }
+                do { try await calculate(from:location.coordinate,to:destinationItem) }
+                catch { status = "Rerouting failed: " + error.localizedDescription }
+            }
+            return
+        }
+
+        let remainingMeters = max(toDestination, route.distance * (1 - projection.fraction))
+        remaining = formatDistance(remainingMeters)
+        let routeSeconds = route.expectedTravelTime * max(0.01, remainingMeters / max(1,route.distance))
+        let speedSeconds = location.speed > 2 ? remainingMeters / location.speed : routeSeconds
+        let seconds = max(60, min(routeSeconds * 1.4, max(routeSeconds * 0.75, speedSeconds)))
+        eta = DateFormatter.localizedString(from:Date().addingTimeInterval(seconds),dateStyle:.none,timeStyle:.short)
+
         guard !steps.isEmpty else {
             instruction = "CONTINUE TO DESTINATION"
+            nextTurn = remaining
             onUpdate?()
             return
         }
-        // Apple Maps route steps are ordered; advance only when the user is
-        // physically close to the step's endpoint, not on a timer.
-        while currentIndex < steps.count - 1 {
-            let step = steps[currentIndex]
-            let points = step.polyline.points()
-            guard step.polyline.pointCount > 0 else { currentIndex += 1; continue }
-            let endpoint = MKMapPoint(x:points[step.polyline.pointCount-1].x,
-                                     y:points[step.polyline.pointCount-1].y)
-            let coordinate = endpoint.coordinate
-            let meters = location.distance(from:CLLocation(latitude:coordinate.latitude,longitude:coordinate.longitude))
-            if meters < 22 { currentIndex += 1; lastSpoken = ""; lastAnnouncedDistance = .infinity }
-            else { break }
+
+        // Choose a route step by where the user is on the route. This prevents
+        // indefinitely getting stuck on a turn already passed.
+        var candidate = currentIndex
+        var bestDistance = Double.infinity
+        for i in currentIndex..<steps.count {
+            let step = steps[i]
+            guard step.polyline.pointCount > 0 else { continue }
+            let p = closestPoint(to:location.coordinate,on:step.polyline)
+            if p.offRoute < bestDistance {
+                candidate = i
+                bestDistance = p.offRoute
+            }
+            if p.offRoute < 30 { break }
+        }
+        if candidate > currentIndex {
+            currentIndex = candidate
+            announcedStep = -1
+            lastThreshold = Int.max
         }
         let step = steps[currentIndex]
         instruction = step.instructions.uppercased()
         let pointCount = step.polyline.pointCount
         var meters = step.distance
         if pointCount > 0 {
-            let endpoint = step.polyline.points()[pointCount-1].coordinate
+            let endpoint = step.polyline.points()[pointCount - 1].coordinate
             meters = location.distance(from:CLLocation(latitude:endpoint.latitude,longitude:endpoint.longitude))
         }
-        nextTurn = meters >= 1609.344 ? String(format:"%.1f MI",meters/1609.344)
-                 : String(format:"%.0f FT",meters*3.28084)
-        if announce && (lastSpoken != instruction || (meters < 120 && lastAnnouncedDistance > 120)) {
-            let prefix = meters > 40 ? "In " + nextTurn.lowercased() + ", " : ""
-            say(prefix + step.instructions)
-            lastSpoken = instruction
-            lastAnnouncedDistance = meters
+        if meters < 25 && currentIndex < steps.count - 1 {
+            currentIndex += 1
+            announcedStep = -1
+            lastThreshold = Int.max
         }
-        onUpdate?()
+        nextTurn = formatDistance(meters).uppercased()
+
+        // Say each new turn, plus advance warnings at about 500 / 150 / 50 m.
+        let threshold = meters < 50 ? 0 : meters < 150 ? 1 : meters < 500 ? 2 : 3
+        if announce && (announcedStep != currentIndex || threshold < lastThreshold) {
+            let prefix = meters > 35 ? "In " + formatDistance(meters) + ", " : ""
+            say(prefix + steps[currentIndex].instructions)
+            announcedStep = currentIndex
+            lastThreshold = threshold
+        }
+        if Date().timeIntervalSince(lastHUDUpdate) > 2.0 {
+            lastHUDUpdate = Date()
+            onUpdate?()
+        }
     }
+
+    private func closestPoint(to coordinate:CLLocationCoordinate2D,on polyline:MKPolyline) -> (fraction:Double,offRoute:Double) {
+        guard polyline.pointCount > 1 else { return (0,Double.infinity) }
+        let points = polyline.points()
+        let user = MKMapPoint(coordinate)
+        var total = 0.0
+        var closest = Double.infinity
+        var distanceAlong = 0.0
+        var covered = 0.0
+        for index in 0..<(polyline.pointCount - 1) {
+            let a = points[index]
+            let b = points[index+1]
+            let dx = b.x - a.x
+            let dy = b.y - a.y
+            let lengthSq = dx*dx + dy*dy
+            if lengthSq <= 0 { continue }
+            let t = max(0,min(1,((user.x-a.x)*dx + (user.y-a.y)*dy)/lengthSq))
+            let px = a.x + dx*t
+            let py = a.y + dy*t
+            let distance = MKMapPoint(x:px,y:py).distance(to:user)
+            let length = sqrt(lengthSq)
+            if distance < closest {
+                closest = distance
+                distanceAlong = covered + length*t
+            }
+            covered += length
+        }
+        total = covered
+        return (fraction:total > 0 ? max(0,min(1,distanceAlong/total)) : 0,
+                offRoute:closest)
+    }
+
+    private func formatDistance(_ meters:Double) -> String {
+        meters >= 1609.344 ? String(format:"%.1f mi",meters/1609.344)
+            : String(format:"%.0f ft",meters*3.28084)
+    }
+
+    private func prepareAudioForSpeech() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback,mode:.spokenAudio,options:[.duckOthers])
+            try session.setActive(true)
+        } catch {
+            status = "Audio setup: " + error.localizedDescription
+        }
+    }
+
     private func say(_ words:String) {
         guard voiceEnabled else { return }
         speaker.stopSpeaking(at:.immediate)
