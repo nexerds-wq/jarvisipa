@@ -96,9 +96,9 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
         status = "Media controls active when iOS delivers them. Raw volume presses might not be exposed."
     }
 
-    func setMode(_ value: Int) {
+    func setMode(_ value: Int, force: Bool = false) {
         guard (0..<Self.modeNames.count).contains(value) else { return }
-        guard Date().timeIntervalSince(lastSwitch) >= 0.55 else { return }
+        guard force || Date().timeIntervalSince(lastSwitch) >= 0.55 else { return }
         lastSwitch = Date()
         mode = value
         recognizedButtonCount += 1
