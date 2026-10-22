@@ -394,6 +394,151 @@ struct SolosDirectHome: View {
         lastOledMessage = body
     }
 
+    private func enterHUDMode(_ selected: Int) {
+        // Stop any timed Jarvis answer pages whenever a glasses control
+        // changes screens. Messages are pinned until NEXT or BACK is pressed.
+        answerDisplayID = UUID()
+        lensAnswerPage = ""
+        answerShowingUntil = .distantPast
+        messageRotationID = UUID()
+        if selected == 2 || selected == 3 {
+            beginCaptions(mode:selected)
+        } else {
+            captions.stop()
+            translationConfiguration = nil
+            translationPending = ""
+            if lockScreenWake && !phone.listening { phone.startListening() }
+            if selected == 0 { phone.refreshSensors() }
+        }
+        if selected == 4 {
+            messagePages = SolosProHUD.messagePages(messageBody)
+            currentMessagePage = 0
+            let token = messageRotationID
+            rotateMessagePages(token)
+        }
+        sendModeHUD(selected)
+    }
+
+    private func beginCaptions(mode:Int) {
+        guard mode == 2 || mode == 3 else { return }
+        // Only one service can own the mic tap reliably at a time.
+        // Re-arm the Hey Jarvis service when captions/translation is exited.
+        phone.stopListening()
+        captions.stop()
+        captionText = ""
+        translatedText = ""
+        translationPending = ""
+        let locale = mode == 2 ? "en-US" : sourceLocale
+        let label = mode == 2 ? "English" :
+            (sourceOptions.first(where:{$0.code == sourceLocale})?.name ?? sourceLocale)
+        if mode == 3 && !locale.hasPrefix("en") {
+            let source = String(locale.split(separator:"-").first ?? "es")
+            translationConfiguration = TranslationSession.Configuration(
+                source:Locale.Language(identifier:source),
+                target:Locale.Language(identifier:"en")
+            )
+        } else {
+            translationConfiguration = nil
+        }
+        captions.start(locale:locale,name:label)
+        sendModeHUD(mode)
+    }
+
+    private func requestTranslation(_ spoken:String) {
+        guard handsFree.mode == 3, !spoken.isEmpty else { return }
+        if sourceLocale.hasPrefix("en") {
+            translatedText = spoken
+            sendModeHUD(3)
+            return
+        }
+        guard spoken != translationPending else { return }
+        translationPending = spoken
+        if translatedText.isEmpty { translatedText = "TRANSLATING..." }
+        // The system task requests models with consent when needed.
+        // Reusing the configuration's invalidation ensures the next spoken
+        // phrase runs in the right source-to-English session.
+        translationConfiguration?.invalidate()
+    }
+
+    private func nextTranslationLanguage() {
+        guard handsFree.mode == 3 else { return }
+        let current = sourceOptions.firstIndex(where:{$0.code == sourceLocale}) ?? 0
+        sourceLocale = sourceOptions[(current + 1) % sourceOptions.count].code
+        // Changing this @AppStorage triggers onChange -> reinitializes captions.
+    }
+
+    private func rotateMessagePages(_ token:UUID) {
+        DispatchQueue.main.asyncAfter(deadline:.now()+8) {
+            guard handsFree.mode == 4, messageRotationID == token else { return }
+            if messagePages.count > 1 {
+                currentMessagePage = (currentMessagePage + 1) % messagePages.count
+                sendModeHUD(4)
+            }
+            rotateMessagePages(token)
+        }
+    }
+
+    private func pinCurrentMessage() {
+        guard !messageBody.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else {
+            contactsStatus = "Paste or type the message first."
+            return
+        }
+        messagePages = SolosProHUD.messagePages(messageBody)
+        currentMessagePage = 0
+        handsFree.setMode(4,force:true)
+    }
+
+    private func acceptIncomingMessageURL(_ url:URL) {
+        guard url.scheme?.lowercased() == "solosjarvis",
+              url.host?.lowercased() == "message",
+              let items = URLComponents(url:url,resolvingAgainstBaseURL:false)?.queryItems,
+              let text = items.first(where:{$0.name == "body"})?.value,
+              !text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return }
+        messageSender = String((items.first(where:{$0.name == "from"})?.value ?? "NEW MESSAGE").prefix(80))
+        messageBody = String(text.prefix(12_000))
+        messagePhoto = nil
+        loadExistingContactPhoto(for:messageSender)
+        pinCurrentMessage()
+    }
+
+    private func loadExistingContactPhoto(for sender:String) {
+        let permission = CNContactStore.authorizationStatus(for:.contacts)
+        guard permission == .authorized || permission == .limited else { return }
+        let store = CNContactStore()
+        let keys = [CNContactGivenNameKey,CNContactFamilyNameKey,
+                    CNContactThumbnailImageDataKey] as [CNKeyDescriptor]
+        do {
+            let matches: [CNContact]
+            if sender.contains(where:{$0.isNumber}) {
+                matches = try store.unifiedContacts(
+                    matching:CNContact.predicateForContacts(matching:CNPhoneNumber(stringValue:sender)),
+                    keysToFetch:keys)
+            } else {
+                matches = try store.unifiedContacts(
+                    matching:CNContact.predicateForContacts(matchingName:sender),
+                    keysToFetch:keys)
+            }
+            guard let contact = matches.first else { return }
+            if let name = CNContactFormatter.string(from:contact,style:.fullName),
+               !name.isEmpty { messageSender = name }
+            if let data = contact.thumbnailImageData {
+                messagePhoto = UIImage(data:data)
+            }
+        } catch {
+            contactsStatus = "Contact photo unavailable: " + error.localizedDescription
+        }
+    }
+
+    private func requestContactsPermission() {
+        CNContactStore().requestAccess(for:.contacts) { granted, _ in
+            DispatchQueue.main.async {
+                contactsStatus = granted ? "Contacts permitted for sender photos" :
+                    "Contacts access not granted. Select a contact manually."
+                if granted { loadExistingContactPhoto(for:messageSender) }
+            }
+        }
+    }
+
     private var navigationCard: some View {
         VStack(alignment:.leading,spacing:12) {
             Label("APPLE MAPS • SPOKEN DIRECTIONS",systemImage:"map.fill")
