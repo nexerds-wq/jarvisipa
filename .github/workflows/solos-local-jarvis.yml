@@ -1,0 +1,38 @@
+name: Build On Phone Offline Jarvis APK
+on:
+  push:
+    branches: [solos-jarvis-onphone-offline]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Get llama.cpp Android engine
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git SolosAndroid/app/src/main/cpp/llama.cpp
+      - name: Download offline AI and offline microphone models to APK
+        run: |
+          mkdir -p SolosAndroid/app/src/main/assets
+          curl -fLsS --retry 3 -o SolosAndroid/app/src/main/assets/jarvis.gguf https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_0.gguf
+          test "$(stat -c%s SolosAndroid/app/src/main/assets/jarvis.gguf)" -gt 85000000
+          curl -fLsS --retry 3 -o SolosAndroid/app/src/main/assets/vosk-en.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+          test "$(stat -c%s SolosAndroid/app/src/main/assets/vosk-en.zip)" -gt 25000000
+          unzip -tqq SolosAndroid/app/src/main/assets/vosk-en.zip
+      - name: Build debug Android APK
+        run: gradle -p SolosAndroid :app:assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Solos-JARVIS-Fully-Offline-APK
+          path: SolosAndroid/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
