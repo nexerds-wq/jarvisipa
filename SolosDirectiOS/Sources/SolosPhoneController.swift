@@ -39,6 +39,9 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var awaitingSpeechCompletion = false
     private var recognitionGeneration = 0
     private var restartScheduled = false
+    private var questionSilenceWork: DispatchWorkItem?
+    private var pendingVoiceQuestion = ""
+    private var recognizerStartedAt = Date.distantPast
     private var timer: Timer?
     private var lastPedometerDay = Calendar.current.startOfDay(for: Date())
     private var asking = false
@@ -306,36 +309,51 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             audioEngine.prepare()
             try audioEngine.start()
             listening = true
+            recognizerStartedAt = Date()
             voiceStatus = "Listening for Hey Jarvis (iPhone microphone)"
+            // Apple documents a roughly 60-second recognition limit. Rotate
+            // tasks before it expires instead of silently losing the wake word.
+            DispatchQueue.main.asyncAfter(deadline:.now()+48) { [weak self] in
+                guard let self, self.recognitionGeneration == generation,
+                      self.listening, !self.heardWake else { return }
+                self.restartRecognitionSoon()
+            }
             speechTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
                 DispatchQueue.main.async {
                     guard let self, self.recognitionGeneration == generation else { return }
                     if let result {
                         let heard = result.bestTranscription.formattedString
                         self.transcribed = heard
-                        if let range = heard.range(of: "hey jarvis", options: .caseInsensitive), !self.heardWake {
-                            // Barge in: stop the current spoken answer immediately.
-                            // The mic can then capture the new question.
-                            if self.accessory.isSpeaking {
-                                self.accessory.interruptSpeech()
-                                self.awaitingSpeechCompletion = false
-                            }
-                            let question = String(heard[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !question.isEmpty && (result.isFinal || question.count > 8) {
+                        if let range = heard.range(of:"hey jarvis",options:.caseInsensitive) {
+                            if !self.heardWake {
                                 self.heardWake = true
-                                self.stopListening()
-                                self.continuousWakeWanted = true
-                                if !self.asking { self.ask(question) }
-                                else { self.voiceStatus = "Jarvis is finishing the previous question; try again." }
+                                self.pendingVoiceQuestion = ""
+                                if self.accessory.isSpeaking {
+                                    self.accessory.interruptSpeech()
+                                    self.awaitingSpeechCompletion = false
+                                }
+                            }
+                            let words = String(heard[range.upperBound...]).trimmingCharacters(in:.whitespacesAndNewlines)
+                            if !words.isEmpty {
+                                self.pendingVoiceQuestion = words
+                                self.scheduleQuestionAfterSilence(generation:generation)
                             } else {
-                                self.voiceStatus = "Hey Jarvis heard! Speak your question..."
+                                self.voiceStatus = "Wake phrase heard — say your full question"
+                            }
+                        } else if self.heardWake {
+                            // Some partial results omit the wake phrase after recognition
+                            // corrects its transcript. Keep collecting until silence.
+                            let words = heard.trimmingCharacters(in:.whitespacesAndNewlines)
+                            if !words.isEmpty {
+                                self.pendingVoiceQuestion = words
+                                self.scheduleQuestionAfterSilence(generation:generation)
                             }
                         }
-                        if result.isFinal && self.listening && !self.heardWake {
-                            self.stopListening()
-                            self.continuousWakeWanted = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-                                if self.continuousWakeWanted { self.startListening() }
+                        if result.isFinal && self.listening {
+                            if self.heardWake && !self.pendingVoiceQuestion.isEmpty {
+                                self.submitPendingVoiceQuestion(generation:generation)
+                            } else {
+                                self.restartRecognitionSoon()
                             }
                         }
                     }
@@ -358,8 +376,51 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             stopListening()
         }
     }
+    // Do not decide a question is complete by character count. Every new
+    // transcription cancels the previous silence timer. A natural pause of
+    // 1.8 seconds (or Apple's final recognition result) submits the question.
+    private func scheduleQuestionAfterSilence(generation:Int) {
+        questionSilenceWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.recognitionGeneration == generation else { return }
+            self.submitPendingVoiceQuestion(generation:generation)
+        }
+        questionSilenceWork = work
+        DispatchQueue.main.asyncAfter(deadline:.now()+1.8,execute:work)
+        voiceStatus = "Listening to your full question — pause when done"
+    }
+
+    private func submitPendingVoiceQuestion(generation:Int) {
+        guard recognitionGeneration == generation else { return }
+        let question = pendingVoiceQuestion.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !question.isEmpty else { return }
+        questionSilenceWork?.cancel()
+        questionSilenceWork = nil
+        pendingVoiceQuestion = ""
+        let rearm = continuousWakeWanted
+        stopListening()
+        continuousWakeWanted = rearm
+        if !asking { ask(question) }
+        else { voiceStatus = "Finishing previous answer; say Hey Jarvis again" }
+    }
+
+    private func restartRecognitionSoon() {
+        let rearm = continuousWakeWanted
+        stopListening()
+        continuousWakeWanted = rearm
+        if rearm {
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.65) { [weak self] in
+                guard let self, self.continuousWakeWanted, !self.listening else { return }
+                self.startListening()
+            }
+        }
+    }
+
     func stopListening() {
         continuousWakeWanted = false
+        questionSilenceWork?.cancel()
+        questionSilenceWork = nil
+        pendingVoiceQuestion = ""
         recognitionGeneration += 1
         if audioEngine.isRunning { audioEngine.stop() }
         audioEngine.inputNode.removeTap(onBus: 0)
