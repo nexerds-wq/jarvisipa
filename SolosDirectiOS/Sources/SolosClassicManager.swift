@@ -19,6 +19,10 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
     @Published private(set) var connectedProtocol = ""
     @Published private(set) var lastFrameSize = 0
 
+    // Exposes only received accessory payloads to user-configured button learning.
+    // Unrecognized bytes are never interpreted as controls.
+    var onAccessoryPacket: ((Data) -> Void)?
+    @Published private(set) var incomingSample = "No accessory messages received"
     private let accessoryManager = EAAccessoryManager.shared()
     private let speaker = AVSpeechSynthesizer()
     private var session: EASession?
@@ -134,6 +138,21 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
         drain()
     }
 
+    func sendHUDImage(_ image: UIImage) {
+        guard session != nil, let outputStream, outputStream.streamStatus == .open else {
+            status = "Connect the Solos glasses before sending the OLED HUD."
+            return
+        }
+        guard let packet = SolosDisplayPacket.imagePacket(image: image) else {
+            status = "Could not encode OLED image."
+            return
+        }
+        lastFrameSize = packet.count
+        pendingFrame = Data([0x1D, 0x60, 0x04, 0x00, 0, 0, 0, 0, 0, 0]) + packet
+        nextByte = 0
+        drain()
+    }
+
     func speak(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -158,7 +177,11 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
             guard let inputStream else { return }
             var temp = [UInt8](repeating: 0, count: 1024)
             while inputStream.hasBytesAvailable {
-                if inputStream.read(&temp, maxLength: temp.count) <= 0 { break }
+                let count = inputStream.read(&temp, maxLength: temp.count)
+                if count <= 0 { break }
+                let received = Data(temp.prefix(count))
+                incomingSample = received.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+                onAccessoryPacket?(received)
             }
         case .errorOccurred:
             status = "Bluetooth accessory stream error: \(aStream.streamError?.localizedDescription ?? "unknown")"
