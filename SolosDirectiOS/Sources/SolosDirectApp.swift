@@ -186,17 +186,13 @@ struct SolosDirectHome: View {
                     if autoDashboard { sendModeHUD(handsFree.mode) }
                 }
             }
-            .onChange(of: phone.aiAnswer) { _, text in
-                guard !text.isEmpty else { return }
-                // The two physical button modes remain dashboard + navigation.
-                // AI answers temporarily take over the lens and then restore the HUD.
-                if phone.aiStatus.hasPrefix("Answered locally") {
-                    answerShowingUntil = Date().addingTimeInterval(24)
-                    sendModeHUD(2, message: text)
-                    DispatchQueue.main.asyncAfter(deadline:.now()+24) {
-                        if Date() >= answerShowingUntil {
-                            sendModeHUD(handsFree.mode)
-                        }
+            .onChange(of: phone.aiStatus) { _, status in
+                guard status.hasPrefix("Answered locally"), !phone.aiAnswer.isEmpty else { return }
+                answerShowingUntil = Date().addingTimeInterval(24)
+                sendModeHUD(2, message: phone.aiAnswer)
+                DispatchQueue.main.asyncAfter(deadline:.now()+24) {
+                    if Date() >= answerShowingUntil {
+                        sendModeHUD(handsFree.mode)
                     }
                 }
             }
