@@ -27,6 +27,7 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
     private var lastAnnouncedDistance = Double.infinity
     private var recalculationAt = Date.distantPast
     private var waitingForFirstGPS = false
+    private var dashboardBackgroundEnabled = false
     private var recalculating = false
     private var lastBackgroundTick = Date.distantPast
     private var lastHUDUpdate = Date.distantPast
@@ -43,6 +44,25 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
         gps.pausesLocationUpdatesAutomatically = false
         gps.showsBackgroundLocationIndicator = true
     }
+    // User-controlled screen-off OLED refresh. Uses location background mode
+    // while connected so the HUD can redraw steps/time without the app visible.
+    // This consumes additional battery and stops if iOS terminates the app.
+    func enableBackgroundDashboard(_ enable: Bool) {
+        dashboardBackgroundEnabled = enable
+        if enable {
+            gps.requestWhenInUseAuthorization()
+            if gps.authorizationStatus == .authorizedWhenInUse || gps.authorizationStatus == .authorizedAlways {
+                gps.allowsBackgroundLocationUpdates = true
+                gps.startUpdatingLocation()
+            } else {
+                status = "Allow location access to enable the screen-off dashboard."
+            }
+        } else if !active {
+            gps.stopUpdatingLocation()
+            gps.allowsBackgroundLocationUpdates = false
+        }
+    }
+
     func start() async {
         let text = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { status = "Enter an address first."; return }
@@ -104,8 +124,10 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
     func stop() {
         active = false
         waitingForFirstGPS = false
-        gps.stopUpdatingLocation()
-        gps.allowsBackgroundLocationUpdates = false
+        if !dashboardBackgroundEnabled {
+            gps.stopUpdatingLocation()
+            gps.allowsBackgroundLocationUpdates = false
+        }
         speaker.stopSpeaking(at:.immediate)
         status = "Navigation stopped."
         route = nil
@@ -115,6 +137,9 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
     }
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         if manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways {
+            if dashboardBackgroundEnabled || active {
+                manager.allowsBackgroundLocationUpdates = true
+            }
             manager.startUpdatingLocation()
         }
     }
@@ -127,6 +152,8 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
         }
         if active {
             updateProgress(at:location,announce:true)
+        }
+        if active || dashboardBackgroundEnabled {
             if Date().timeIntervalSince(lastBackgroundTick) > 55 {
                 lastBackgroundTick = Date()
                 onBackgroundTick?()
@@ -147,8 +174,10 @@ final class SolosNavigationEngine: NSObject, ObservableObject, CLLocationManager
             eta = DateFormatter.localizedString(from:Date(),dateStyle:.none,timeStyle:.short)
             if lastSpoken != instruction { say("You have arrived at your destination."); lastSpoken = instruction }
             active = false
-            gps.stopUpdatingLocation()
-            gps.allowsBackgroundLocationUpdates = false
+            if !dashboardBackgroundEnabled {
+                gps.stopUpdatingLocation()
+                gps.allowsBackgroundLocationUpdates = false
+            }
             onUpdate?()
             return
         }
