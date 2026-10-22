@@ -16,7 +16,7 @@ struct AskJarvisIntent: AppIntent {
     var question: String
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Ask Jarvis \(\.question)")
+        Summary("Ask Jarvis \(\.$question)")
     }
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
