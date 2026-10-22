@@ -36,6 +36,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var failureCount = 0
     private var lastRestart = Date.distantPast
     private var buffersCaptured = 0
+    private var recentUnexpectedRestarts = [Date]()
     private var audioInterrupted = false
     private var lastAudioConfiguration = Date.distantPast
 
@@ -51,6 +52,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                 self.audioInterrupted = true
                 self.generation += 1
                 self.restartTask?.cancel()
+                self.restartTask = nil
                 self.cleanup()
                 self.status = "Mic interrupted by iOS; resuming when available"
             } else if raw == AVAudioSession.InterruptionType.ended.rawValue {
@@ -88,6 +90,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         buffersCaptured = 0
         lastDisplay = .distantPast
         failureCount = 0
+        recentUnexpectedRestarts.removeAll()
         audioInterrupted = false
         lastAudioConfiguration = .distantPast
         desired = true
@@ -235,8 +238,27 @@ final class OfflineCaptionService: NSObject, ObservableObject {
 
     private func scheduleRestart(reason:String) {
         guard desired, !audioInterrupted, restartTask == nil else { return }
-        guard Date().timeIntervalSince(lastRestart) >= 0.4 else { return }
-        lastRestart = Date()
+        let current = Date()
+        guard current.timeIntervalSince(lastRestart) >= 0.4 else { return }
+        let expectedRotation = reason == "Caption utterance completed" ||
+            reason == "Rotating 48-second speech session"
+        if expectedRotation {
+            recentUnexpectedRestarts.removeAll()
+        } else {
+            recentUnexpectedRestarts.removeAll {
+                current.timeIntervalSince($0) > 45
+            }
+            recentUnexpectedRestarts.append(current)
+            // Automatic microphone recovery must never become a CPU/memory
+            // restart storm when another app owns audio or the route is bad.
+            if recentUnexpectedRestarts.count >= 6 {
+                desired = false
+                cleanup()
+                status = "Speech paused after repeated audio errors. Switch HUD away and back to retry."
+                return
+            }
+        }
+        lastRestart = current
         generation += 1
         restartTask?.cancel()
         cleanup()
