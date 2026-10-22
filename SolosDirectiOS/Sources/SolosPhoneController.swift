@@ -39,6 +39,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var awaitingSpeechCompletion = false
     private var recognitionGeneration = 0
     private var restartScheduled = false
+    private var startingRecognition = false
+    private var speechStartedAt = Date.distantPast
     private var questionSilenceWork: DispatchWorkItem?
     private var pendingVoiceQuestion = ""
     private var recognizerStartedAt = Date.distantPast
@@ -53,12 +55,13 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         accessory.onSpeechCompleted = { [weak self] in
             DispatchQueue.main.async {
                 guard let self else { return }
+                // didCancel can be delivered for an earlier utterance after
+                // another utterance starts. Do not tear down the new answer.
+                guard !self.accessory.isSpeaking else { return }
                 self.awaitingSpeechCompletion = false
-                guard self.continuousWakeWanted, !self.listening else { return }
-                DispatchQueue.main.asyncAfter(deadline:.now()+0.8) { [weak self] in
-                    guard let self, self.continuousWakeWanted, !self.listening else { return }
-                    self.startListening()
-                }
+                guard self.continuousWakeWanted else { return }
+                self.voiceStatus = "Answer finished — restoring Hey Jarvis listening"
+                self.scheduleWakeRearm(after:0.6)
             }
         }
         // Observe audio interruptions and route changes rather than showing
@@ -93,10 +96,21 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         })
         lockWatchdog = Timer.scheduledTimer(withTimeInterval:5,repeats:true) { [weak self] _ in
             guard let self, self.continuousWakeWanted else { return }
+            // Speech synthesis can finish, fail, or be interrupted without
+            // delivering its completion delegate callback. Never leave
+            // continuous wake blocked forever by awaitingSpeechCompletion.
+            if self.awaitingSpeechCompletion && !self.asking &&
+               !self.accessory.isSpeaking &&
+               Date().timeIntervalSince(self.speechStartedAt) > 1.5 {
+                self.awaitingSpeechCompletion = false
+                self.voiceStatus = "Recovered missed speech-finished callback"
+            }
             if self.listening && !self.audioEngine.isRunning {
                 self.voiceStatus = "Microphone stopped; trying to restore listening"
                 self.restartRecognitionSoon()
-            } else if !self.listening && !self.asking && !self.awaitingSpeechCompletion {
+            } else if !self.listening && !self.asking &&
+                        (!self.awaitingSpeechCompletion ||
+                         UserDefaults.standard.bool(forKey:"jarvisLockScreenWake")) {
                 self.resumeWakeIfNeeded()
             }
         }
@@ -350,7 +364,16 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                             self.voiceStatus = "Audio route: \(error.localizedDescription)"
                         }
                         self.awaitingSpeechCompletion = true
+                        self.speechStartedAt = Date()
                         self.accessory.speak(response)
+                        if bargeIn && self.continuousWakeWanted {
+                            // The previous SFSpeechRecognizer task was stopped
+                            // on submission. Start a fresh wake detector now,
+                            // instead of relying on AVSpeechSynthesizer.didFinish.
+                            // iOS voiceChat handles acoustic echo cancellation
+                            // on supported audio routes.
+                            self.scheduleWakeRearm(after:0.9)
+                        }
                     }
                 } catch {
                     self.aiStatus = "On-device JARVIS error: \(error.localizedDescription)"
@@ -449,8 +472,20 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         return "According to Wikipedia: " + String(extract.prefix(540))
     }
 
+    private func scheduleWakeRearm(after delay:TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline:.now()+delay) { [weak self] in
+            guard let self, self.continuousWakeWanted, !self.listening else { return }
+            // An AI task or an earlier authorization callback may still be
+            // settling. The periodic watchdog also checks for recovery.
+            guard !self.asking else { return }
+            self.startListening()
+        }
+    }
+
     private func resumeWakeIfNeeded() {
-        guard continuousWakeWanted, !listening, !asking else { return }
+        guard continuousWakeWanted, !listening, !startingRecognition, !asking else { return }
+        guard !awaitingSpeechCompletion ||
+              UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") else { return }
         startListening()
     }
 
@@ -464,15 +499,34 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
 
     func startListening() {
-        // Foreground opt-in keeps an audio recording session active. iOS may
-        // allow recording to continue when locked, but not after force-quit.
+        // Guard asynchronous permission callbacks to prevent two overlapping
+        // audio-engine taps or stale callbacks restarting after STOP.
         continuousWakeWanted = true
+        guard !listening, !startingRecognition else { return }
+        startingRecognition = true
+        let expectedGeneration = recognitionGeneration
         SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
             DispatchQueue.main.async {
                 guard let self else { return }
-                guard authorization == .authorized else { self.voiceStatus = "Speech recognition permission denied"; return }
-                AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                guard self.continuousWakeWanted,
+                      self.recognitionGeneration == expectedGeneration else {
+                    self.startingRecognition = false
+                    return
+                }
+                guard authorization == .authorized else {
+                    self.startingRecognition = false
+                    self.voiceStatus = "Speech recognition permission denied"
+                    return
+                }
+                AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
                     DispatchQueue.main.async {
+                        guard let self else { return }
+                        guard self.continuousWakeWanted,
+                              self.recognitionGeneration == expectedGeneration else {
+                            self.startingRecognition = false
+                            return
+                        }
+                        self.startingRecognition = false
                         if granted { self.beginRecording() }
                         else { self.voiceStatus = "Microphone permission denied" }
                     }
@@ -601,14 +655,18 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
 
     private func restartRecognitionSoon() {
+        // Audio route + engine notifications can arrive in a burst. Coalesce
+        // them so restarts cannot cancel each other indefinitely.
+        guard !restartScheduled else { return }
         let rearm = continuousWakeWanted
         stopListening()
         continuousWakeWanted = rearm
-        if rearm {
-            DispatchQueue.main.asyncAfter(deadline:.now()+0.65) { [weak self] in
-                guard let self, self.continuousWakeWanted, !self.listening else { return }
-                self.startListening()
-            }
+        restartScheduled = true
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.9) { [weak self] in
+            guard let self else { return }
+            self.restartScheduled = false
+            guard self.continuousWakeWanted, !self.listening else { return }
+            self.startListening()
         }
     }
 
@@ -619,6 +677,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
 
     func stopListening() {
         continuousWakeWanted = false
+        startingRecognition = false
+        awaitingSpeechCompletion = false
         questionSilenceWork?.cancel()
         questionSilenceWork = nil
         pendingVoiceQuestion = ""
