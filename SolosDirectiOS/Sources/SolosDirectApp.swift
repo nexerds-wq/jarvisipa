@@ -410,7 +410,7 @@ struct SolosDirectHome: View {
             captions.stop()
             translationConfiguration = nil
             translationPending = ""
-            if lockScreenWake && !phone.listening { phone.startListening() }
+            phone.setHUDCaptionsActive(false)
             if selected == 0 { phone.refreshSensors() }
         }
         if selected == 4 {
@@ -426,7 +426,7 @@ struct SolosDirectHome: View {
         guard mode == 2 || mode == 3 else { return }
         // Only one service can own the mic tap reliably at a time.
         // Re-arm the Hey Jarvis service when captions/translation is exited.
-        phone.stopListening()
+        phone.setHUDCaptionsActive(true)
         captions.stop()
         captionText = ""
         translatedText = ""
