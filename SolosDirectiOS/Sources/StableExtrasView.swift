@@ -14,7 +14,7 @@ struct StableExtrasView: View {
     @ObservedObject private var accessory: SolosClassicManager
     @StateObject private var captions = OfflineCaptionService()
 
-    @AppStorage("solosFlip180") private var flip180 = false
+    @AppStorage("solosOrientationMode") private var orientationMode = 0
     @AppStorage("solosVisionBold") private var sharpText = false
     @AppStorage("solosVisionGiant") private var giantText = false
     @State private var panel = 0
@@ -40,7 +40,7 @@ struct StableExtrasView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Image(systemName: "eye.fill").foregroundStyle(accent)
-                    Text("SOLOS  /  V6  OLED").font(.system(size: 19, weight: .black, design: .monospaced))
+                    Text("SOLOS  /  V7  OLED").font(.system(size: 19, weight: .black, design: .monospaced))
                     Spacer()
                     Circle().fill(accessory.connectedProtocol.isEmpty ? Color.orange : accent)
                         .frame(width: 10, height: 10)
@@ -154,7 +154,16 @@ struct StableExtrasView: View {
     private var visionPanel: some View {
         VStack(alignment: .leading, spacing: 13) {
             heading("MAX-CLARITY OLED LENS", "eye.fill")
-            Toggle("Rotate glasses image 180°", isOn: $flip180).tint(accent)
+            Picker("DISPLAY CORRECTION", selection: $orientationMode) {
+                Text("V4 original").tag(0)
+                Text("Rotate 180°").tag(1)
+                Text("Mirror left/right").tag(2)
+                Text("Flip top/bottom").tag(3)
+            }
+            .pickerStyle(.menu)
+            .tint(accent)
+            Text("Select one correction at a time, then send ABC 123 to the lens.")
+                .font(.caption).foregroundStyle(.secondary)
             Toggle("Sharper, heavier white lettering", isOn: $sharpText).tint(accent)
             Toggle("Giant text / fewer words", isOn: $giantText).tint(accent)
             Text("These settings change only pixels sent to the lens. Your V4.1 Bluetooth connection and frame format are preserved.")
@@ -164,6 +173,11 @@ struct StableExtrasView: View {
             action("TEST SHARPENED IMAGE", icon: "eye") {
                 accessory.sendHUD(testMessage)
             }
+            Button("TEST ORIENTATION — TOP ABC 123 >") {
+                accessory.sendHUD("TOP ABC 123 >\nLEFT > RIGHT\nBOTTOM 789")
+            }
+            .buttonStyle(.bordered)
+            .tint(accent)
             Image(uiImage: SolosDisplayPacket.render(message: testMessage))
                 .resizable()
                 .interpolation(.none)
