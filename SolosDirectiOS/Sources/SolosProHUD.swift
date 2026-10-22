@@ -40,7 +40,7 @@ enum SolosProHUD {
         line(12,34,404,mint.withAlphaComponent(0.65),thickness:2)
         draw(detail, x: 14, y: 218, size: 13, color: mint, maxWidth:398)
     }
-    static func image(mode: Int, clock:String, date:String, steps: Int, distance: String, speed:String, battery:String, gps:String, message:String = "", detail:String = "TAP GLASSES TO CHANGE MODE") -> UIImage {
+    static func image(mode: Int, clock:String, date:String, steps: Int, distance: String, speed:String, battery:String, gps:String, message:String = "", detail:String = "TAP GLASSES TO CHANGE MODE", sender:String = "", senderPhoto:UIImage? = nil, messagePage:Int = 1, pageCount:Int = 1) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
@@ -99,6 +99,33 @@ enum SolosProHUD {
                 draw("ETA " + arrival,x:21,y:188,size:17,color:blue,bold:true,maxWidth:185)
                 draw("LEFT " + left,x:211,y:188,size:17,color:pale,bold:true,maxWidth:195)
             case 2:
+                header("LIVE CAPTIONS",detail:detail)
+                bigBody(message.isEmpty ? "LISTENING FOR SPEECH..." : String(message.suffix(250)),
+                        top:47, height:156, preferred:31, minimum:21)
+            case 3:
+                header("ENGLISH TRANSLATION",detail:detail)
+                bigBody(message.isEmpty ? "LISTENING / TRANSLATING..." : String(message.suffix(250)),
+                        top:47, height:156, preferred:31, minimum:21)
+            case 4:
+                // Native contact thumbnail is rendered into the actual OLED image.
+                rect(12,42,404,63,panel,9)
+                if let image = senderPhoto {
+                    let target = CGRect(x:19,y:46,width:55,height:55)
+                    UIBezierPath(roundedRect:target,cornerRadius:12).addClip()
+                    image.draw(in:target)
+                } else {
+                    rect(19,46,55,55,mint.withAlphaComponent(0.25),12)
+                    draw(String(sender.prefix(1)).uppercased(),x:35,y:55,size:32,
+                         color:pale,bold:true,maxWidth:36)
+                }
+                draw(sender.isEmpty ? "MESSAGE" : sender,x:85,y:60,size:22,color:pale,
+                     bold:true,maxWidth:324)
+                line(16,113,396,mint.withAlphaComponent(0.6))
+                bigBody(message.isEmpty ? "NO MESSAGE YET" : message,top:121,height:88,
+                        preferred:30,minimum:19)
+                draw("MESSAGE \(messagePage)/\(pageCount)  •  PINNED",x:17,y:216,
+                     size:12,color:mint,maxWidth:392)
+            case 5:
                 header("JARVIS ANSWER",detail:detail)
                 let p = NSMutableParagraphStyle()
                 p.lineBreakMode = .byWordWrapping
@@ -113,6 +140,58 @@ enum SolosProHUD {
             }
         }
     }
+    static func bigBody(_ text: String, top: CGFloat, height: CGFloat,
+                        preferred: CGFloat, minimum: CGFloat) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.lineSpacing = 3
+        let rect = CGRect(x:17,y:top,width:394,height:height)
+        var size = preferred
+        while size > minimum {
+            let font = UIFont.systemFont(ofSize:size,weight:.bold)
+            let bounds = (text as NSString).boundingRect(
+                with: CGSize(width:rect.width,height:CGFloat.greatestFiniteMagnitude),
+                options:[.usesLineFragmentOrigin,.usesFontLeading],
+                attributes:[.font:font,.paragraphStyle:paragraph],context:nil)
+            if bounds.height <= height { break }
+            size -= 1
+        }
+        (text as NSString).draw(in:rect,withAttributes:[
+            .font:UIFont.systemFont(ofSize:size,weight:.bold),
+            .foregroundColor:pale,.paragraphStyle:paragraph
+        ])
+    }
+
+    // A full message is never silently discarded. Text too long for one
+    // 428x240 lens is split into pages that remain in MESSAGE HUD mode.
+    static func messagePages(_ text: String) -> [String] {
+        let clean = text.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !clean.isEmpty else { return ["NO MESSAGE YET"] }
+        let font = UIFont.systemFont(ofSize:21,weight:.bold)
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byWordWrapping
+        style.lineSpacing = 3
+        let limit: CGFloat = 88
+        let width: CGFloat = 392
+        var pages = [String]()
+        var current = ""
+        for word in clean.split(whereSeparator: { $0.isWhitespace }).map(String.init) {
+            let candidate = current.isEmpty ? word : current + " " + word
+            let size = (candidate as NSString).boundingRect(
+                with:CGSize(width:width,height:CGFloat.greatestFiniteMagnitude),
+                options:[.usesLineFragmentOrigin,.usesFontLeading],
+                attributes:[.font:font,.paragraphStyle:style],context:nil)
+            if size.height > limit && !current.isEmpty {
+                pages.append(current)
+                current = word
+            } else {
+                current = candidate
+            }
+        }
+        if !current.isEmpty { pages.append(current) }
+        return pages.isEmpty ? ["NO MESSAGE YET"] : pages
+    }
+
     /// Wrap complete AI answers into legible 428x240 OLED pages. Never silently
     /// cut off the last sentence simply because one page is too small.
     static func answerPages(_ answer: String) -> [String] {
