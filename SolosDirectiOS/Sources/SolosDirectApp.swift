@@ -591,64 +591,185 @@ struct SolosDirectHome: View {
         .background(Color(red:0.035,green:0.08,blue:0.10),in:RoundedRectangle(cornerRadius:18))
     }
     private var handsFreeCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment:.leading,spacing:12) {
             HStack {
-                Text("JARVIS / OLED CONTROL")
-                    .font(.system(size: 19, weight: .black, design: .monospaced))
+                Text("SOLOS • HUD CONTROLS").font(.system(size:19,weight:.black,design:.monospaced))
                     .foregroundStyle(.mint)
                 Spacer()
                 Circle().fill(accessory.connectedProtocol.isEmpty ? Color.orange : Color.mint)
-                    .frame(width: 11, height: 11)
+                    .frame(width:11,height:11)
             }
-            let modes = ["DAILY DASHBOARD", "VOICE NAVIGATION"]
-            Text("MODE \(handsFree.mode + 1) / 2  •  \(modes[handsFree.mode])")
-                .font(.system(size: 15, weight: .heavy, design: .monospaced))
-            Image(uiImage: SolosProHUD.image(
-                mode: Date() < answerShowingUntil ? 2 : handsFree.mode, clock: phone.clock,
-                date: phone.dateLine, steps: Int(phone.steps) ?? 0,
-                distance: phone.distance, speed: phone.speed,
-                battery: phone.battery, gps: phone.coordinates,
-                message: Date() < answerShowingUntil ? lensAnswerPage : (handsFree.mode == 1 ? navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining : lastOledMessage)))
-                .resizable()
-                .interpolation(.none)
-                .aspectRatio(428.0 / 240.0, contentMode:.fit)
-                .clipShape(RoundedRectangle(cornerRadius: 11))
-                .overlay(RoundedRectangle(cornerRadius:11).stroke(.mint.opacity(0.5), lineWidth:1))
+            Text("MODE \(handsFree.mode + 1) / 5  •  \(SolosHandsFreeEngine.modeNames[handsFree.mode])")
+                .font(.system(size:14,weight:.heavy,design:.monospaced))
+            let previewMode = Date() < answerShowingUntil && handsFree.mode != 4 ? 5 : handsFree.mode
+            let previewMessage: String = {
+                switch previewMode {
+                case 1:
+                    return navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining
+                case 2: return captionText
+                case 3: return translatedText
+                case 4: return messagePages[min(currentMessagePage,messagePages.count - 1)]
+                case 5: return lensAnswerPage
+                default: return lastOledMessage
+                }
+            }()
+            Image(uiImage:SolosProHUD.image(
+                mode:previewMode,clock:phone.clock,date:phone.dateLine,
+                steps:Int(phone.steps) ?? 0,distance:phone.distance,
+                speed:phone.speed,battery:phone.battery,gps:phone.coordinates,
+                message:previewMessage,sender:messageSender,
+                senderPhoto:messagePhoto,messagePage:currentMessagePage + 1,
+                pageCount:messagePages.count))
+                .resizable().interpolation(.none)
+                .aspectRatio(428.0 / 240.0,contentMode:.fit)
+                .clipShape(RoundedRectangle(cornerRadius:11))
+                .overlay(RoundedRectangle(cornerRadius:11).stroke(.mint.opacity(0.5),lineWidth:1))
             Text(handsFree.status).font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("NEXT MODE") { handsFree.nextMode() }
+                Button("◀ BACK HUD") { handsFree.previousMode() }
+                    .buttonStyle(.borderedProminent).tint(.cyan)
+                Button("NEXT HUD ▶") { handsFree.nextMode() }
                     .buttonStyle(.borderedProminent).tint(.mint)
-                Button(handsFree.learning ? "PRESS SAME BUTTON 3 TIMES..." : "LEARN GLASSES BUTTON") {
-                    handsFree.learn()
-                }.buttonStyle(.bordered)
+            }
+            HStack {
+                Button("LEARN NEXT") { handsFree.learn(.next) }.buttonStyle(.bordered)
+                Button("LEARN BACK") { handsFree.learn(.back) }.buttonStyle(.bordered)
+                Button("LEARN LANG") { handsFree.learn(.language) }.buttonStyle(.bordered)
+            }.font(.caption)
+            if handsFree.learning {
+                Text("LEARNING \(handsFree.learningAction): press that physical button 3 times, about 1 second apart.")
+                    .font(.caption.bold()).foregroundStyle(.orange)
             }
             Text("Accessory input: " + accessory.incomingSample)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.mint.opacity(0.8))
+                .font(.system(size:10,design:.monospaced)).foregroundStyle(.mint.opacity(0.8))
                 .textSelection(.enabled)
-            Text("Learned stable HEX (?? = changing byte): " + handsFree.learnedDescription)
-                .font(.caption2.monospaced())
-                .foregroundStyle(.secondary).textSelection(.enabled)
+            Text("NEXT: " + handsFree.learnedDescription(.next))
+                .font(.caption2.monospaced()).textSelection(.enabled)
+            Text("BACK: " + handsFree.learnedDescription(.back))
+                .font(.caption2.monospaced()).textSelection(.enabled)
+            Text("LANGUAGE: " + handsFree.learnedDescription(.language))
+                .font(.caption2.monospaced()).textSelection(.enabled)
             HStack {
-                Text("Standard play / next / previous headset controls can also switch modes when iOS delivers them.")
+                Text("?? means a changing byte. Different buttons need distinct incoming packets.")
                     .font(.caption2).foregroundStyle(.secondary)
                 Spacer()
-                Button("RESET LEARNED") { handsFree.clearLearnedButton() }
+                Button("RESET HEX") { handsFree.clearLearnedButton() }
                     .font(.caption2.bold()).foregroundStyle(.orange)
             }
-            Text("Buttons that iOS exposes only as volume cannot be captured by a regular IPA. Keep this screen open during button learning.")
+            Text("iOS may not expose volume-only presses. The phone BACK/NEXT controls always work.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(16)
         .background(Color(red:0.035,green:0.08,blue:0.10),in:RoundedRectangle(cornerRadius:18))
         .overlay(RoundedRectangle(cornerRadius:18).stroke(.mint.opacity(0.35),lineWidth:1))
     }
+
+    private var captionCard: some View {
+        VStack(alignment:.leading,spacing:10) {
+            Label("AUTO-START LIVE CAPTIONS",systemImage:"captions.bubble.fill")
+                .font(.headline).foregroundStyle(.mint)
+            Text("Switch to HUD 3. English captions start listening immediately. Moving away stops the caption mic and restores Hey Jarvis.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("GO TO CAPTIONS HUD") {
+                    handsFree.setMode(2,force:true)
+                }.buttonStyle(.borderedProminent).tint(.mint)
+                if handsFree.mode == 2 {
+                    Button("RESTART CAPTIONS") { beginCaptions(mode:2) }.buttonStyle(.bordered)
+                }
+            }
+            Text(captions.status).font(.caption).foregroundStyle(.secondary)
+            Text(captionText.isEmpty ? "Listening for speech..." : captionText)
+                .font(.title3.weight(.bold))
+                .frame(maxWidth:.infinity,alignment:.leading)
+                .padding(12)
+                .background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:10))
+        }.card()
+    }
+
+    private var translationCard: some View {
+        VStack(alignment:.leading,spacing:11) {
+            Label("LIVE SPEECH → ENGLISH",systemImage:"character.book.closed.fill")
+                .font(.headline).foregroundStyle(.mint)
+            Picker("Spoken language",selection:$sourceLocale) {
+                ForEach(sourceOptions.indices,id:\.self) { index in
+                    Text(sourceOptions[index].name).tag(sourceOptions[index].code)
+                }
+            }.pickerStyle(.menu)
+            HStack {
+                Button("NEXT LANGUAGE") { nextTranslationLanguage() }
+                    .buttonStyle(.bordered)
+                    .disabled(handsFree.mode != 3)
+                Button("GO TO TRANSLATION HUD") {
+                    handsFree.setMode(3,force:true)
+                }.buttonStyle(.borderedProminent).tint(.mint)
+            }
+            Text("Source: \(sourceOptions.first(where:{$0.code == sourceLocale})?.name ?? sourceLocale) → English. Apple may ask to download on-device language packs.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text(translatedText.isEmpty ? "Translated English appears here..." : translatedText)
+                .font(.title3.weight(.bold))
+                .frame(maxWidth:.infinity,alignment:.leading)
+                .padding(12)
+                .background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:10))
+            if !captionText.isEmpty {
+                Text("HEARD: " + captionText).font(.caption).foregroundStyle(.secondary)
+            }
+        }.card()
+    }
+
+    private var messageCard: some View {
+        VStack(alignment:.leading,spacing:10) {
+            Label("PINNED MESSAGES • CONTACT + PHOTO",systemImage:"message.fill")
+                .font(.headline).foregroundStyle(.mint)
+            Text("Shows a full message on the actual 428×240 lens, cycling long messages across pages until you press NEXT or BACK HUD. It cannot read iMessage notifications by itself.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                if let image = messagePhoto {
+                    Image(uiImage:image).resizable().scaledToFill()
+                        .frame(width:52,height:52).clipShape(RoundedRectangle(cornerRadius:11))
+                } else {
+                    Image(systemName:"person.crop.circle.fill")
+                        .resizable().frame(width:47,height:47).foregroundStyle(.mint)
+                }
+                TextField("Sender contact name",text:$messageSender)
+                    .textInputAutocapitalization(.words)
+                Button("CHOOSE CONTACT") { showContactPicker = true }
+                    .buttonStyle(.bordered)
+            }
+            TextEditor(text:$messageBody)
+                .frame(height:85)
+                .scrollContentBackground(.hidden).padding(6)
+                .background(.white.opacity(0.07),in:RoundedRectangle(cornerRadius:10))
+            HStack {
+                Button("PASTE MESSAGE") {
+                    messageBody = UIPasteboard.general.string ?? ""
+                }.buttonStyle(.bordered)
+                Button("PIN TO GLASSES") { pinCurrentMessage() }
+                    .buttonStyle(.borderedProminent).tint(.mint)
+            }
+            HStack {
+                Button("NEXT MESSAGE PAGE") {
+                    guard handsFree.mode == 4 else { return }
+                    currentMessagePage = (currentMessagePage + 1) % messagePages.count
+                    sendModeHUD(4)
+                }.buttonStyle(.bordered)
+                Button("ALLOW CONTACT PHOTOS") { requestContactsPermission() }
+                    .buttonStyle(.bordered)
+            }.font(.caption)
+            if !contactsStatus.isEmpty {
+                Text(contactsStatus).font(.caption).foregroundStyle(.secondary)
+            }
+            Text("Shortcuts bridge: Open URLs with solosjarvis://message?from=CONTACT&body=MESSAGE, URL-encoding both values. A Message automation can supply sender and message variables. Automation/locked-screen behavior depends on iOS.")
+                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+        }.card()
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("SOLOS  /  iPHONE")
                 .font(.system(.title2, design: .monospaced).bold())
                 .foregroundStyle(.mint)
-            Text("V17: AI error diagnostics • Optional Wikipedia answers • Spoken OLED HUD.")
+            Text("V21: Back button • Instant captions • English translations • Pinned messages")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .padding(.vertical, 10)
