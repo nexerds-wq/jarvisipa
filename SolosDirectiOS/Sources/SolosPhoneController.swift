@@ -270,9 +270,32 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     return
                 }
                 do {
-                    let session = LanguageModelSession(instructions: "You are JARVIS, a helpful offline smart glasses assistant. Give brief, accurate spoken answers of one or two sentences. Do not claim access to internet or live information.")
-                    let result = try await session.respond(to: trimmed)
-                    self.aiAnswer = result.content
+                    // Foundation Models may reject or fail a session even when
+                    // Apple Intelligence is switched on. Retry once with a fresh,
+                    // minimal session and a clean question; never mask the cause.
+                    let cleaned = trimmed.replacingOccurrences(
+                        of: #"(?i)^\\s*(hey[ ,]*jarvis[ ,:!?.-]*)+"#,
+                        with: "", options: .regularExpression
+                    ).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let prompt = cleaned.isEmpty ? trimmed : cleaned
+                    let response: String
+                    do {
+                        let session = LanguageModelSession(instructions: "Answer clearly in one or two short sentences.")
+                        response = try await session.respond(to: prompt).content
+                    } catch {
+                        self.aiStatus = "AI first attempt failed; retrying a new session..."
+                        let retry = LanguageModelSession()
+                        do {
+                            response = try await retry.respond(to: prompt).content
+                        } catch {
+                            throw NSError(domain:"SolosJarvis.AI",code:1,userInfo:[
+                                NSLocalizedDescriptionKey:"Apple on-device model failed twice: " +
+                                    String(describing:error) +
+                                    ". Check Apple Intelligence model availability, restart the iPhone, and try again."
+                            ])
+                        }
+                    }
+                    self.aiAnswer = response
                     self.aiStatus = "Answered locally (no AI API key or computer)"
                     // The dedicated OLED lens renderer displays complete answer pages.
                     // Avoid a competing raw HUD packet that can overwrite them.
