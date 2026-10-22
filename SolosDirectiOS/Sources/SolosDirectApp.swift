@@ -1,4 +1,5 @@
 import SwiftUI
+import MapKit
 
 @main
 struct SolosDirectApp: App {
@@ -16,6 +17,7 @@ struct SolosDirectHome: View {
     @ObservedObject var phone: SolosPhoneController
     @ObservedObject private var accessory: SolosClassicManager
     @StateObject private var handsFree = SolosHandsFreeEngine()
+    @StateObject private var navigation = SolosNavigationEngine()
     init(phone: SolosPhoneController) {
         self.phone = phone
         self._accessory = ObservedObject(wrappedValue: phone.accessory)
@@ -33,6 +35,7 @@ struct SolosDirectHome: View {
                 VStack(alignment: .leading, spacing: 18) {
                     header
                     handsFreeCard
+                    navigationCard
                     SolosAccessoryCard(manager: phone.accessory)
                     VStack(alignment: .leading, spacing: 9) {
                         Text("IPHONE OFFLINE JARVIS").font(.headline).foregroundStyle(.mint)
@@ -95,7 +98,7 @@ struct SolosDirectHome: View {
                         Text("GPS needs Location permission; daily steps and distance need Motion & Fitness permission. Live updates run while this app is open.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.card()
-                    StableExtrasView(phone: phone)
+
                     VStack(alignment: .leading, spacing: 8) {
                         Text("TEST CUSTOM HUD — ORIGINAL V4 CONNECTION").font(.headline).foregroundStyle(.mint)
                         Text("Correct upside-down AND mirrored letters independently. Start with V4 Original, then try each correction.")
@@ -182,23 +185,74 @@ struct SolosDirectHome: View {
         }
         handsFree.onModeChange = { selected in
             if selected == 0 { phone.refreshSensors() }
-            NotificationCenter.default.post(name: Notification.Name("SolosHandsFreeMode"), object: nil, userInfo: ["mode":selected])
             sendModeHUD(selected)
         }
+        navigation.onUpdate = { if handsFree.mode == 1 { sendModeHUD(1) } }
         if autoDashboard && !accessory.connectedProtocol.isEmpty {
             sendModeHUD(handsFree.mode)
         }
     }
     private func sendModeHUD(_ mode: Int, message: String = "") {
         guard !accessory.connectedProtocol.isEmpty else { return }
+        let navMessage = navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining
         let view = SolosProHUD.image(mode: mode,
             clock: phone.clock, date: phone.dateLine,
             steps: Int(phone.steps) ?? 0, distance: phone.distance,
             speed: phone.speed, battery: phone.battery,
-            gps: phone.coordinates, message: message,
-            detail: "SOLOS • \(mode + 1)/5 • HANDS FREE")
+            gps: phone.coordinates, message: mode == 1 ? navMessage : message,
+            detail: "SOLOS • \(mode + 1)/2 • VOICE NAV")
         accessory.sendHUDImage(view)
         lastOledMessage = message
+    }
+    private var navigationCard: some View {
+        VStack(alignment:.leading,spacing:12) {
+            Label("APPLE MAPS • SPOKEN DIRECTIONS",systemImage:"map.fill")
+                .font(.headline).foregroundStyle(.mint)
+            TextField("Enter address, place, or ZIP",text:$navigation.address)
+                .textContentType(.fullStreetAddress)
+                .textInputAutocapitalization(.words)
+                .padding(12)
+                .background(.black,in:RoundedRectangle(cornerRadius:10))
+            HStack {
+                Button("START NAVIGATION") {
+                    Task {
+                        await navigation.start()
+                        if navigation.active { sendModeHUD(1) }
+                    }
+                }.buttonStyle(.borderedProminent).tint(.mint)
+                Button("STOP") { navigation.stop(); sendModeHUD(1) }
+                    .buttonStyle(.bordered)
+            }
+            Toggle("Speak turn-by-turn directions",isOn:$navigation.voiceEnabled)
+                .tint(.mint)
+            Text(navigation.status).font(.caption).foregroundStyle(.secondary)
+            Text(navigation.instruction)
+                .font(.system(size:19,weight:.black,design:.rounded))
+            HStack {
+                Label(navigation.nextTurn,systemImage:"arrow.turn.up.right")
+                Spacer()
+                Label(navigation.remaining,systemImage:"point.topleft.down.to.point.bottomright.curvepath")
+            }.font(.subheadline)
+            if let route = navigation.route {
+                Map(initialPosition:.region(MKCoordinateRegion(
+                    center:navigation.position ?? route.polyline.coordinate,
+                    latitudinalMeters:5000,longitudinalMeters:5000))) {
+                    MapPolyline(route.polyline).stroke(.mint,lineWidth:5)
+                    if let target = navigation.target {
+                        Marker("Destination",coordinate:target)
+                    }
+                    if let position = navigation.position {
+                        Marker("You",coordinate:position)
+                    }
+                }
+                .frame(height:210)
+                .clipShape(RoundedRectangle(cornerRadius:14))
+            }
+            Text("Apple Maps searches and routing need internet. Voice uses iPhone text-to-speech. Navigation and HUD updates require the app active; this is not Google Maps.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(15)
+        .background(Color(red:0.035,green:0.08,blue:0.10),in:RoundedRectangle(cornerRadius:18))
     }
     private var handsFreeCard: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -210,15 +264,15 @@ struct SolosDirectHome: View {
                 Circle().fill(accessory.connectedProtocol.isEmpty ? Color.orange : Color.mint)
                     .frame(width: 11, height: 11)
             }
-            let modes = ["DASHBOARD", "CAPTIONS", "TRANSLATE", "JARVIS AI", "SETTINGS"]
-            Text("MODE \(handsFree.mode + 1) / 5  •  \(modes[handsFree.mode])")
+            let modes = ["DAILY DASHBOARD", "VOICE NAVIGATION"]
+            Text("MODE \(handsFree.mode + 1) / 2  •  \(modes[handsFree.mode])")
                 .font(.system(size: 15, weight: .heavy, design: .monospaced))
             Image(uiImage: SolosProHUD.image(
                 mode: handsFree.mode, clock: phone.clock,
                 date: phone.dateLine, steps: Int(phone.steps) ?? 0,
                 distance: phone.distance, speed: phone.speed,
                 battery: phone.battery, gps: phone.coordinates,
-                message: lastOledMessage))
+                message: handsFree.mode == 1 ? navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining : lastOledMessage))
                 .resizable()
                 .interpolation(.none)
                 .aspectRatio(428.0 / 240.0, contentMode:.fit)
