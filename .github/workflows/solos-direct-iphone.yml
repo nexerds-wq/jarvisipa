@@ -7,13 +7,17 @@ permissions:
   contents: read
 jobs:
   ios:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode 26.3 for iOS Foundation Models
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          if [ -d /Applications/Xcode_26.3.app/Contents/Developer ]; then
+            sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          else
+            echo "Xcode 26.3 not installed; using runner default"
+          fi
           xcodebuild -version
       - name: Install XcodeGen
         run: |
