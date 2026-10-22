@@ -8,6 +8,11 @@ import CoreGraphics
 enum SolosDisplayPacket {
     static let width = 428
     static let height = 240
+    // Invert the transmitted image 180 degrees for the Solos waveguide.
+    static var rotate180: Bool { UserDefaults.standard.object(forKey: "hudRotation") as? Bool ?? true }
+    static var giantText: Bool { UserDefaults.standard.bool(forKey: "hudGiantText") }
+    static var visionContrast: Bool { UserDefaults.standard.object(forKey: "hudHighContrast") as? Bool ?? true }
+
 
     static func render(message: String) -> UIImage {
         let size = CGSize(width: width, height: height)
@@ -16,9 +21,9 @@ enum SolosDisplayPacket {
             UIColor.black.setFill()
             context.fill(CGRect(origin: .zero, size: size))
 
-            let cyan = UIColor(red: 0.22, green: 0.92, blue: 0.90, alpha: 1)
+            let cyan = UIColor(red: 0.24, green: 1, blue: 0.75, alpha: 1)
             let titleStyle: [NSAttributedString.Key: Any] = [
-                .font: UIFont.monospacedSystemFont(ofSize: 25, weight: .bold),
+                .font: UIFont.monospacedSystemFont(ofSize: 22, weight: .black),
                 .foregroundColor: cyan
             ]
             ("JARVIS  /  SOLOS" as NSString).draw(at: CGPoint(x: 20, y: 14), withAttributes: titleStyle)
@@ -32,14 +37,16 @@ enum SolosDisplayPacket {
 
             let bodyStyle = NSMutableParagraphStyle()
             bodyStyle.lineBreakMode = .byWordWrapping
-            bodyStyle.lineSpacing = 4
+            bodyStyle.lineSpacing = giantText ? 6 : 3
             let bodyAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 23, weight: .medium),
+                .font: UIFont.systemFont(ofSize: giantText ? 37 : 29, weight: visionContrast ? .black : .bold),
                 .foregroundColor: UIColor.white,
+                .strokeColor: UIColor.white,
+                .strokeWidth: visionContrast ? -1.3 : 0,
                 .paragraphStyle: bodyStyle
             ]
-            (String(message.prefix(145)) as NSString).draw(
-                in: CGRect(x: 20, y: 66, width: 388, height: 130),
+            (String(message.prefix(giantText ? 92 : 175)) as NSString).draw(
+                in: CGRect(x: 16, y: 62, width: 400, height: 147),
                 withAttributes: bodyAttributes
             )
 
@@ -91,7 +98,8 @@ enum SolosDisplayPacket {
             ])
         }
 
-        for offset in stride(from: 0, to: rgba.count, by: 4) {
+        for pixel in 0..<(width * height) {
+            let offset = rotate180 ? (width * height - 1 - pixel) * 4 : pixel * 4
             let red = UInt16(rgba[offset] >> 3)
             let green = UInt16(rgba[offset + 1] >> 2)
             let blue = UInt16(rgba[offset + 2] >> 3)
