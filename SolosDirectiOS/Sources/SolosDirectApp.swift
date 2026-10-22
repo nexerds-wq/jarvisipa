@@ -66,6 +66,7 @@ struct SolosDirectHome: View {
     @State private var messageRotationID = UUID()
     @State private var showContactPicker = false
     @State private var contactsStatus = ""
+    @State private var lastIncomingMessageID = ""
 
     @State private var lastDashboardMinute = ""
     @State private var page = 0
@@ -266,6 +267,7 @@ struct SolosDirectHome: View {
             }
             .onAppear {
                 configureHandsFree()
+                consumeShortcutMessage()
                 if lockScreenWake && handsFree.mode != 2 && handsFree.mode != 3 && !phone.listening { phone.startListening() }
             }
             .onChange(of: accessory.connectedProtocol) { _, proto in
@@ -279,6 +281,7 @@ struct SolosDirectHome: View {
                 showAnswerOnGlasses(phone.aiAnswer)
             }
             .onChange(of: phone.now) { _, time in
+                consumeShortcutMessage()
                 guard autoDashboard, handsFree.mode == 0, Date() >= answerShowingUntil, !accessory.connectedProtocol.isEmpty else { return }
                 let stamp = String(Calendar.current.component(.year, from: time)) + "-" +
                             String(Calendar.current.component(.month, from: time)) + "-" +
@@ -486,6 +489,23 @@ struct SolosDirectHome: View {
         messagePages = SolosProHUD.messagePages(messageBody)
         currentMessagePage = 0
         handsFree.setMode(4,force:true)
+    }
+
+    private func consumeShortcutMessage() {
+        let defaults = UserDefaults.standard
+        guard let id = defaults.string(forKey:"jarvisIncomingMessageID"),
+              id != lastIncomingMessageID,
+              let body = defaults.string(forKey:"jarvisIncomingMessageBody"),
+              !body.isEmpty else { return }
+        lastIncomingMessageID = id
+        messageSender = defaults.string(forKey:"jarvisIncomingMessageSender") ?? "NEW MESSAGE"
+        messageBody = body
+        messagePhoto = nil
+        defaults.removeObject(forKey:"jarvisIncomingMessageID")
+        defaults.removeObject(forKey:"jarvisIncomingMessageBody")
+        defaults.removeObject(forKey:"jarvisIncomingMessageSender")
+        loadExistingContactPhoto(for:messageSender)
+        pinCurrentMessage()
     }
 
     private func acceptIncomingMessageURL(_ url:URL) {
@@ -759,7 +779,7 @@ struct SolosDirectHome: View {
             if !contactsStatus.isEmpty {
                 Text(contactsStatus).font(.caption).foregroundStyle(.secondary)
             }
-            Text("Shortcuts bridge: Open URLs with solosjarvis://message?from=CONTACT&body=MESSAGE, URL-encoding both values. A Message automation can supply sender and message variables. Automation/locked-screen behavior depends on iOS.")
+            Text("In iPhone Shortcuts: Automation → Message → Run Immediately → Show Jarvis Message. Set Sender and Message from the Shortcut Input fields. It may need the iPhone unlocked to open Jarvis. You can also use solosjarvis://message?from=NAME&body=TEXT (URL-encoded).")
                 .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
         }.card()
     }
