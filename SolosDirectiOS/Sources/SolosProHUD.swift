@@ -107,12 +107,16 @@ enum SolosProHUD {
                 bigBody(message.isEmpty ? "LISTENING / TRANSLATING..." : String(message.suffix(250)),
                         top:47, height:156, preferred:31, minimum:21)
             case 4:
+                header("MESSAGE",detail:"")
                 // Native contact thumbnail is rendered into the actual OLED image.
                 rect(12,42,404,63,panel,9)
                 if let image = senderPhoto {
                     let target = CGRect(x:19,y:46,width:55,height:55)
+                    let context = UIGraphicsGetCurrentContext()
+                    context?.saveGState()
                     UIBezierPath(roundedRect:target,cornerRadius:12).addClip()
                     image.draw(in:target)
+                    context?.restoreGState()
                 } else {
                     rect(19,46,55,55,mint.withAlphaComponent(0.25),12)
                     draw(String(sender.prefix(1)).uppercased(),x:35,y:55,size:32,
