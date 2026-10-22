@@ -36,6 +36,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var heardWake = false
     private var lastQuestion = ""
     private var continuousWakeWanted = false
+    private var hudCaptionsActive = false
     private var awaitingSpeechCompletion = false
     private var recognitionGeneration = 0
     private var restartScheduled = false
@@ -503,7 +504,18 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         startListening()
     }
 
+    func setHUDCaptionsActive(_ active: Bool) {
+        hudCaptionsActive = active
+        if active {
+            stopListening()
+            voiceStatus = "Microphone handed to live captions/translation HUD"
+        } else if UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
+            startListening()
+        }
+    }
+
     func resumeAfterScreenUnlock() {
+        guard !hudCaptionsActive else { return }
         if UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
             continuousWakeWanted = true
             if !listening || !audioEngine.isRunning {
@@ -513,6 +525,10 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
 
     func startListening() {
+        guard !hudCaptionsActive else {
+            voiceStatus = "Live captions currently own the microphone"
+            return
+        }
         // Guard asynchronous permission callbacks to prevent two overlapping
         // audio-engine taps or stale callbacks restarting after STOP.
         continuousWakeWanted = true
