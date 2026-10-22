@@ -5,7 +5,7 @@ struct SolosDirectApp: App {
     @StateObject private var phone = SolosPhoneController()
     var body: some Scene {
         WindowGroup {
-            SolosDirectHome(phone: phone)
+            SolosV5Home(phone: phone)
                 .preferredColorScheme(.dark)
                 .onAppear { phone.refreshSensors(); phone.accessory.refresh() }
         }
