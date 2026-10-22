@@ -42,6 +42,7 @@ struct SolosDirectHome: View {
     @State private var lastDashboardMinute = ""
     @State private var page = 0
     @State private var lastOledMessage = ""
+    @State private var answerShowingUntil = Date.distantPast
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -186,12 +187,21 @@ struct SolosDirectHome: View {
                 }
             }
             .onChange(of: phone.aiAnswer) { _, text in
-                if handsFree.mode == 3 && !text.isEmpty {
-                    sendModeHUD(3, message: text)
+                guard !text.isEmpty else { return }
+                // The two physical button modes remain dashboard + navigation.
+                // AI answers temporarily take over the lens and then restore the HUD.
+                if phone.aiStatus.hasPrefix("Answered locally") {
+                    answerShowingUntil = Date().addingTimeInterval(24)
+                    sendModeHUD(2, message: text)
+                    DispatchQueue.main.asyncAfter(deadline:.now()+24) {
+                        if Date() >= answerShowingUntil {
+                            sendModeHUD(handsFree.mode)
+                        }
+                    }
                 }
             }
             .onChange(of: phone.now) { _, time in
-                guard autoDashboard, handsFree.mode == 0, !accessory.connectedProtocol.isEmpty else { return }
+                guard autoDashboard, handsFree.mode == 0, Date() >= answerShowingUntil, !accessory.connectedProtocol.isEmpty else { return }
                 let stamp = String(Calendar.current.component(.year, from: time)) + "-" +
                             String(Calendar.current.component(.month, from: time)) + "-" +
                             String(Calendar.current.component(.day, from: time)) + "-" +
@@ -220,10 +230,11 @@ struct SolosDirectHome: View {
             handsFree.input(packet)
         }
         handsFree.onModeChange = { selected in
+            answerShowingUntil = .distantPast
             if selected == 0 { phone.refreshSensors() }
             sendModeHUD(selected)
         }
-        navigation.onUpdate = { if handsFree.mode == 1 { sendModeHUD(1) } }
+        navigation.onUpdate = { if handsFree.mode == 1 && Date() >= answerShowingUntil { sendModeHUD(1) } }
         navigation.onBackgroundTick = {
             phone.refreshStepsOnly()
             if autoDashboard && handsFree.mode == 0 {
