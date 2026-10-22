@@ -1,7 +1,7 @@
 name: Build Solos Direct iPhone IPA
 on:
   push:
-    branches: [solos-iphone-direct-ai, solos-iphone-v4-stable-flip]
+    branches: [solos-iphone-direct-ai, solos-iphone-v4-stable-flip, solos-iphone-v6-stable-features]
   workflow_dispatch:
 permissions:
   contents: read
