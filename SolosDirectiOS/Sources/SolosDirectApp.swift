@@ -67,6 +67,7 @@ struct SolosDirectHome: View {
                             .buttonStyle(.bordered)
                     }.card()
                     SolosAccessoryCard(manager: phone.accessory)
+                    StableExtrasView(phone: phone)
                     VStack(alignment: .leading, spacing: 8) {
                         Text("TEST CUSTOM HUD — ORIGINAL V4 CONNECTION").font(.headline).foregroundStyle(.mint)
                         Toggle("ROTATE GLASSES DISPLAY 180°", isOn: $flip180)
