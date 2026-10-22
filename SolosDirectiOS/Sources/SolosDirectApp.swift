@@ -48,6 +48,7 @@ struct SolosDirectHome: View {
     @AppStorage("jarvisLockScreenWake") private var lockScreenWake = false
     @AppStorage("jarvisWikipediaFallback") private var wikipediaFallback = false
     @AppStorage("solosTranslationSourceLocale") private var sourceLocale = "es-ES"
+    @AppStorage("solosAllowOnlineSpeech") private var allowOnlineSpeech = false
     private let sourceOptions: [(code:String,name:String)] = [
         ("es-ES","Spanish"),("fr-FR","French"),("de-DE","German"),
         ("it-IT","Italian"),("pt-BR","Portuguese"),("ja-JP","Japanese"),
@@ -57,6 +58,10 @@ struct SolosDirectHome: View {
     @State private var captionText = ""
     @State private var translatedText = ""
     @State private var translationPending = ""
+    @State private var translationDebounce: DispatchWorkItem?
+    @State private var translationStatus = "Select the translation HUD to start"
+    @State private var lastTranslationSubmitted = ""
+    @State private var messageRelayStatus = "Waiting for a Shortcuts message automation"
     @State private var translationConfiguration: TranslationSession.Configuration?
     @State private var messageSender = "NEW MESSAGE"
     @State private var messageBody = ""
@@ -244,20 +249,33 @@ struct SolosDirectHome: View {
             }
             .onOpenURL { url in acceptIncomingMessageURL(url) }
             .translationTask(translationConfiguration) { session in
-                let original = translationPending
-                guard handsFree.mode == 3, !original.isEmpty else { return }
+                // Apple runs this closure when the configuration changes,
+                // including invalidate() for the next stable speech phrase.
+                // Prepare models on HUD entry, before any spoken words arrive.
                 do {
                     try await session.prepareTranslation()
-                    let result = try await session.translate(original)
+                    let original = translationPending
+                    if original.isEmpty {
+                        await MainActor.run {
+                            guard handsFree.mode == 3 else { return }
+                            translationStatus = "Translation model READY • speak now"
+                            translatedText = "READY • SPEAK IN YOUR CHOSEN LANGUAGE"
+                            sendModeHUD(3)
+                        }
+                        return
+                    }
+                    let answer = try await session.translate(original)
                     await MainActor.run {
                         guard handsFree.mode == 3, translationPending == original else { return }
-                        translatedText = result.targetText
+                        translationStatus = "Translated spoken " + (sourceOptions.first(where:{$0.code == sourceLocale})?.name ?? sourceLocale) + " into English"
+                        translatedText = answer.targetText
                         sendModeHUD(3)
                     }
                 } catch {
                     await MainActor.run {
-                        guard handsFree.mode == 3, translationPending == original else { return }
-                        translatedText = "Translation unavailable: " + error.localizedDescription
+                        guard handsFree.mode == 3 else { return }
+                        translationStatus = "Translation error: " + error.localizedDescription
+                        translatedText = "TRANSLATION ERROR • See iPhone for details"
                         sendModeHUD(3)
                     }
                 }
@@ -345,13 +363,17 @@ struct SolosDirectHome: View {
             if handsFree.mode == 2 {
                 sendModeHUD(2)
             } else if handsFree.mode == 3 {
-                requestTranslation(words)
+                debounceTranslation(words)
             }
         }
         captions.onFinal = { words in
             captionText = words
             if handsFree.mode == 2 { sendModeHUD(2) }
-            if handsFree.mode == 3 { requestTranslation(words) }
+            if handsFree.mode == 3 {
+                translationDebounce?.cancel()
+                translationDebounce = nil
+                requestTranslation(words)
+            }
         }
         navigation.onUpdate = { if handsFree.mode == 1 && Date() >= answerShowingUntil { sendModeHUD(1) } }
         navigation.onBackgroundTick = {
@@ -408,6 +430,8 @@ struct SolosDirectHome: View {
             beginCaptions(mode:selected)
         } else {
             captions.stop()
+            translationDebounce?.cancel()
+            translationDebounce = nil
             translationConfiguration = nil
             translationPending = ""
             phone.setHUDCaptionsActive(false)
@@ -428,9 +452,13 @@ struct SolosDirectHome: View {
         // Re-arm the Hey Jarvis service when captions/translation is exited.
         phone.setHUDCaptionsActive(true)
         captions.stop()
+        translationDebounce?.cancel()
+        translationDebounce = nil
         captionText = ""
         translatedText = ""
         translationPending = ""
+        lastTranslationSubmitted = ""
+        translationStatus = mode == 3 ? "Preparing English translator..." : "Captions starting..."
         let locale = mode == 2 ? "en-US" : sourceLocale
         let label = mode == 2 ? "English" :
             (sourceOptions.first(where:{$0.code == sourceLocale})?.name ?? sourceLocale)
@@ -443,24 +471,45 @@ struct SolosDirectHome: View {
         } else {
             translationConfiguration = nil
         }
-        captions.start(locale:locale,name:label)
+        captions.start(locale:locale,name:label,allowOnlineRecognition:allowOnlineSpeech)
         sendModeHUD(mode)
+    }
+
+    private func debounceTranslation(_ spoken:String) {
+        guard handsFree.mode == 3, !spoken.isEmpty else { return }
+        // Do not cancel Apple's translation session on every partial
+        // recognition callback. Translate when words stabilize for 1 second.
+        translationDebounce?.cancel()
+        let job = DispatchWorkItem { requestTranslation(spoken) }
+        translationDebounce = job
+        DispatchQueue.main.asyncAfter(deadline:.now()+1.0,execute:job)
     }
 
     private func requestTranslation(_ spoken:String) {
         guard handsFree.mode == 3, !spoken.isEmpty else { return }
         if sourceLocale.hasPrefix("en") {
             translatedText = spoken
+            translationStatus = "English speech captioned directly"
             sendModeHUD(3)
             return
         }
-        guard spoken != translationPending else { return }
+        guard spoken != lastTranslationSubmitted else { return }
+        lastTranslationSubmitted = spoken
         translationPending = spoken
-        if translatedText.isEmpty { translatedText = "TRANSLATING..." }
-        // The system task requests models with consent when needed.
-        // Reusing the configuration's invalidation ensures the next spoken
-        // phrase runs in the right source-to-English session.
-        translationConfiguration?.invalidate()
+        translationStatus = "Recognized \(spoken.count) characters • translating..."
+        translatedText = "TRANSLATING • " + String(spoken.prefix(110))
+        sendModeHUD(3)
+        // The initial configuration starts model download/consent.
+        // invalidate() reruns .translationTask for each NEW stable phrase.
+        if translationConfiguration == nil {
+            let language = String(sourceLocale.split(separator:"-").first ?? "es")
+            translationConfiguration = TranslationSession.Configuration(
+                source:Locale.Language(identifier:language),
+                target:Locale.Language(identifier:"en")
+            )
+        } else {
+            translationConfiguration?.invalidate()
+        }
     }
 
     private func nextTranslationLanguage() {
@@ -699,6 +748,16 @@ struct SolosDirectHome: View {
                 }
             }
             Text(captions.status).font(.caption).foregroundStyle(.secondary)
+            Text("MIC BUFFERS: \(captions.audioBuffers) • " + captions.recognizerMode)
+                .font(.caption2.monospaced()).foregroundStyle(.mint)
+            Toggle("ALLOW ONLINE SPEECH WHEN OFFLINE RECOGNITION IS UNAVAILABLE",isOn:$allowOnlineSpeech)
+                .font(.caption2).tint(.mint)
+                .onChange(of: allowOnlineSpeech) { _, _ in
+                    if handsFree.mode == 2 { beginCaptions(mode:2) }
+                    if handsFree.mode == 3 { beginCaptions(mode:3) }
+                }
+            Text("Online speech sends microphone audio to Apple's recognition service when the on-device language pack is unavailable. Off by default.")
+                .font(.caption2).foregroundStyle(.secondary)
             Text(captionText.isEmpty ? "Listening for speech..." : captionText)
                 .font(.title3.weight(.bold))
                 .frame(maxWidth:.infinity,alignment:.leading)
@@ -726,6 +785,9 @@ struct SolosDirectHome: View {
             }
             Text("Source: \(sourceOptions.first(where:{$0.code == sourceLocale})?.name ?? sourceLocale) → English. Apple may ask to download on-device language packs.")
                 .font(.caption).foregroundStyle(.secondary)
+            Text(translationStatus).font(.caption2).foregroundStyle(.secondary)
+            Text("MIC BUFFERS: \(captions.audioBuffers) • " + captions.recognizerMode)
+                .font(.caption2.monospaced()).foregroundStyle(.mint)
             Text(translatedText.isEmpty ? "Translated English appears here..." : translatedText)
                 .font(.title3.weight(.bold))
                 .frame(maxWidth:.infinity,alignment:.leading)
