@@ -31,6 +31,10 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var central: CBCentralManager?
     private var speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let audioEngine = AVAudioEngine()
+    // Removing a tap that was never installed can raise an Obj-C AVFAudio
+    // exception (not caught by Swift do/catch). Captions take mic ownership
+    // often, including before the wake recognizer has ever started.
+    private var wakeAudioTapInstalled = false
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var speechTask: SFSpeechRecognitionTask?
     private var heardWake = false
@@ -583,7 +587,17 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             try audio.setActive(true, options: .notifyOthersOnDeactivation)
             let node = audioEngine.inputNode
             let format = node.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                voiceStatus = "iOS microphone route isn't ready. Reconnect headset or choose the iPhone microphone."
+                stopListening()
+                return
+            }
+            if wakeAudioTapInstalled {
+                node.removeTap(onBus:0)
+                wakeAudioTapInstalled = false
+            }
             node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in request.append(buffer) }
+            wakeAudioTapInstalled = true
             audioEngine.prepare()
             try audioEngine.start()
             listening = true
@@ -714,7 +728,10 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         pendingVoiceQuestion = ""
         recognitionGeneration += 1
         if audioEngine.isRunning { audioEngine.stop() }
-        audioEngine.inputNode.removeTap(onBus: 0)
+        if wakeAudioTapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            wakeAudioTapInstalled = false
+        }
         recognitionRequest?.endAudio()
         speechTask?.cancel()
         speechTask = nil
