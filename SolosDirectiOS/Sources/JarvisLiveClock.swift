@@ -94,7 +94,7 @@ enum JarvisLiveClock {
     static func modelTimeContext(at instant: Date = Date()) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = .gregorian
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "EEEE, MMMM d, yyyy 'at' h:mm a zzz"
         return "The live iPhone date and time at this request is \(formatter.string(from: instant)). Use this value when a question depends on today's date. Do not invent fresh news or current external information."
