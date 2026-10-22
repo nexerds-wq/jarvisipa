@@ -30,6 +30,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var starting = false
     private var onDeviceOnly = true
     private var lastDisplay = Date.distantPast
+    private var lastCaptionDelivered = ""
     private var generation = 0
     private var tapInstalled = false
     private var observerTokens = [NSObjectProtocol]()
@@ -89,6 +90,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         audioBuffers = 0
         buffersCaptured = 0
         lastDisplay = .distantPast
+        lastCaptionDelivered = ""
         failureCount = 0
         recentUnexpectedRestarts.removeAll()
         audioInterrupted = false
@@ -207,8 +209,14 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                             .trimmingCharacters(in:.whitespacesAndNewlines)
                         if !words.isEmpty {
                             self.partial = words
-                            if Date().timeIntervalSince(self.lastDisplay) >= 0.7 {
+                            // First partial appears immediately; later
+                            // changed fragments can update up to ~7 times/s.
+                            // HUD frame compression has its own independent
+                            // pacing and latest-wins queue, so mic stays fast.
+                            if words != self.lastCaptionDelivered &&
+                               Date().timeIntervalSince(self.lastDisplay) >= 0.14 {
                                 self.lastDisplay = Date()
+                                self.lastCaptionDelivered = words
                                 self.onSubtitle?(words)
                             }
                             if result.isFinal {
