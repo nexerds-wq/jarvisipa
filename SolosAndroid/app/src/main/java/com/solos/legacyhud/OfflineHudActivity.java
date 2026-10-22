@@ -31,7 +31,8 @@ public class OfflineHudActivity extends Activity implements SensorEventListener,
   private volatile boolean running=true;
   private Spinner paired;
   private TextView status,details,rxDisplay;
-  private EditText tempEntry,conditionEntry;
+  private EditText tempEntry,conditionEntry,aiEntry;
+  private JarvisBrain jarvis;
   private final ArrayList<BluetoothDevice> devices=new ArrayList<>();
   private android.content.SharedPreferences prefs;
   private SensorManager sensors;
@@ -68,7 +69,7 @@ public class OfflineHudActivity extends Activity implements SensorEventListener,
     ScrollView scroll=new ScrollView(this);
     LinearLayout root=new LinearLayout(this);root.setPadding(24,20,24,30);root.setOrientation(LinearLayout.VERTICAL);
     scroll.addView(root);setContentView(scroll);
-    TextView heading=new TextView(this);heading.setText("SOLOS LEGACY HUD v2\n100% offline HUD mode");heading.setTextSize(24);root.addView(heading);
+    TextView heading=new TextView(this);heading.setText("SOLOS LEGACY HUD v3\nJARVIS AI - ON PHONE");heading.setTextSize(24);root.addView(heading);
     status=new TextView(this);status.setPadding(0,12,0,12);root.addView(status);
     paired=new Spinner(this);root.addView(paired);
     add(root,"Refresh paired glasses",v->refresh());
@@ -76,9 +77,21 @@ public class OfflineHudActivity extends Activity implements SensorEventListener,
     add(root,"DASHBOARD  •  TIME, GPS, STEPS",v->switchMode(0));
     add(root,"CAPTIONS  •  ENGLISH",v->switchMode(1));
     add(root,"TRANSLATOR  •  SPANISH TO ENGLISH",v->switchMode(2));
+    add(root,"JARVIS AI - OFFLINE (HEY JARVIS)",v->switchMode(3));
     add(root,"NEXT HUD MODE  (+)",v->nextMode("Phone button"));
     add(root,"PREPARE OFFLINE SPEECH PACKS",v->prepareSpeechPacks());
     add(root,"DOWNLOAD SPANISH-ENGLISH MODEL (Wi-Fi ONCE)",v->downloadTranslationModel());
+    TextView aiHelp=new TextView(this);
+    aiHelp.setText("\nLOCAL JARVIS: No PC, no Wi-Fi, no API keys. Models are inside this APK. Press JARVIS AI, let it prepare once, say HEY JARVIS and then your question. Uses the phone microphone.");
+    root.addView(aiHelp);
+    aiEntry=new EditText(this);
+    aiEntry.setSingleLine(false);aiEntry.setMinLines(2);aiEntry.setHint("Or type a question for offline AI");root.addView(aiEntry);
+    add(root,"ASK OFFLINE JARVIS",v->{
+      if(jarvis==null){showState("Please reopen the app to initialize JARVIS");return;}
+      if(mode!=3)switchMode(3);
+      jarvis.ask(aiEntry.getText().toString());
+    });
+    add(root,"START JARVIS VOICE",v->{if(mode!=3)switchMode(3);if(jarvis!=null)jarvis.listen();});
     TextView label=new TextView(this);
     label.setText("\nWEATHER CACHE (manual entry)\nNo phone can know live outdoor weather in airplane mode without a weather sensor or saved report. Enter the last known weather if wanted.");
     root.addView(label);
@@ -93,6 +106,15 @@ public class OfflineHudActivity extends Activity implements SensorEventListener,
     TextView info=new TextView(this);
     info.setText("Keep the app open for continuous tracking. Bluetooth, phone GPS and step sensor work without mobile data. Speech requires Android 12+ and installed on-device speech models. Phone microphone is used. The glasses + button works only if Android or RFCOMM exposes its event; use NEXT MODE if not.");
     root.addView(info);
+    jarvis=new JarvisBrain(this,new JarvisBrain.Listener(){
+      @Override public void onStatus(String message){
+        if(mode==3){stateMessage=message;refreshUi();}
+      }
+      @Override public void onAnswer(String answer){
+        caption=answer;
+        if(mode==3)redraw(true);
+      }
+    });
     setupMediaButtons();
     askPermissions();
     refreshUi();
@@ -118,7 +140,7 @@ public class OfflineHudActivity extends Activity implements SensorEventListener,
   private void showState(String s){stateMessage=s;refreshUi();}
   private void refreshUi(){
     if(status==null)return;
-    status.setText((connected?"● CONNECTED":"○ NOT CONNECTED")+" | "+new String[]{"DASHBOARD","CAPTIONS","TRANSLATE"}[mode]+"\n"+stateMessage);
+    status.setText((connected?"● CONNECTED":"○ NOT CONNECTED")+" | "+new String[]{"DASHBOARD","CAPTIONS","TRANSLATE","JARVIS AI"}[mode]+"\n"+stateMessage);
     rxDisplay.setText("Button diagnostic: "+lastIncoming+"\nLearned: "+(learnedSignature.isEmpty()?"none":learnedSignature));
     details.setText(String.format(Locale.US,"Steps: %s | Trip: %.2f mi\nGPS: %s | Speed: %.1f mph\nWeather: %s\n%s",
        steps<0?"sensor unavailable":""+steps,tripMeters/1609.344,
@@ -227,12 +249,14 @@ public class OfflineHudActivity extends Activity implements SensorEventListener,
   }
   private void nextMode(String source){
     long now=SystemClock.elapsedRealtime();if(now-lastButtonAt<600)return;lastButtonAt=now;
-    switchMode((mode+1)%3);lastIncoming=source+" • mode changed";refreshUi();
+    switchMode((mode+1)%4);lastIncoming=source+" • mode changed";refreshUi();
   }
   private void switchMode(int newMode){
-    if(mode!=newMode)stopSpeech();
-    mode=newMode;caption="";showState(new String[]{"Live dashboard","English offline captions","Spanish > English offline translation"}[mode]);
-    if(mode>0)startSpeech();
+    if(mode!=newMode){stopSpeech();if(jarvis!=null)jarvis.stopListening();}
+    mode=newMode;caption="";
+    showState(new String[]{"Live dashboard","English offline captions","Spanish > English offline translation","On-phone AI: preparing offline models"}[mode]);
+    if(mode==1||mode==2)startSpeech();
+    if(mode==3&&jarvis!=null)jarvis.listen();
     redraw(true);
   }
   private void startSensorsAndGps(){
@@ -393,7 +417,7 @@ public class OfflineHudActivity extends Activity implements SensorEventListener,
     lastFrameAt=now;
     int m=mode,n=steps;double dist=tripMeters,sp=speedMps,lat=latitude,lon=longitude;
     boolean g=gps;String cap=caption,w=weather.isEmpty()?"NO OFFLINE WEATHER DATA":weather;
-    String source=weatherLabel,msg=voiceWanted?"ON-DEVICE SPEECH":"OFFLINE SPEECH UNAVAILABLE";
+    String source=weatherLabel,msg=mode==3?"OFFLINE PHONE AI":voiceWanted?"ON-DEVICE SPEECH":"OFFLINE SPEECH UNAVAILABLE";
     worker.execute(()->{
       try{
         Bitmap bitmap=HudRenderer.render(m,cap,n,dist,sp,lat,lon,g,w,source,msg);
@@ -433,6 +457,7 @@ public class OfflineHudActivity extends Activity implements SensorEventListener,
     if(translator!=null)translator.close();
     worker.execute(()->{try{if(socket!=null)socket.close();}catch(Exception ignored){}});
     worker.shutdown();
+    if(jarvis!=null)jarvis.close();
     super.onDestroy();
   }
 }
