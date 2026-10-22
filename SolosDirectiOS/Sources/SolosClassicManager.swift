@@ -30,7 +30,9 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
     private var inputStream: InputStream?
     private var outputStream: OutputStream?
     private var pendingFrame = Data()
+    private var queuedFrames: [Data] = []
     private var nextByte = 0
+    @Published private(set) var hudFramesSent = 0
 
     var declaredProtocols: [String] {
         Bundle.main.object(forInfoDictionaryKey: "UISupportedExternalAccessoryProtocols") as? [String] ?? []
@@ -112,6 +114,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
         connectedName = ""
         connectedProtocol = ""
         pendingFrame = Data()
+        queuedFrames.removeAll()
         nextByte = 0
     }
 
@@ -133,25 +136,41 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
             status = "Failed to encode HUD image."
             return
         }
-        lastFrameSize = packet.count
-        pendingFrame = Data([0x1D, 0x60, 0x04, 0x00, 0, 0, 0, 0, 0, 0]) + packet
-        nextByte = 0
-        drain()
+        enqueuePacket(packet, priority: false)
     }
 
-    func sendHUDImage(_ image: UIImage) {
+    func sendHUDImage(_ image: UIImage, priority: Bool = false) {
         guard session != nil, let outputStream, outputStream.streamStatus == .open else {
-            status = "Connect the Solos glasses before sending the OLED HUD."
+            status = "NO GLASSES HUD CONNECTION. Connect an exposed Solos ExternalAccessory session."
             return
         }
         guard let packet = SolosDisplayPacket.imagePacket(image: image) else {
             status = "Could not encode OLED image."
             return
         }
-        lastFrameSize = packet.count
-        pendingFrame = Data([0x1D, 0x60, 0x04, 0x00, 0, 0, 0, 0, 0, 0]) + packet
-        nextByte = 0
-        drain()
+        enqueuePacket(packet, priority: priority)
+    }
+
+    // A display frame must finish before another one begins. Replacing a partially
+    // written Bluetooth packet corrupts the image on actual glasses.
+    // Priority frames from Jarvis are queued ahead of dashboard refreshes.
+    private func enqueuePacket(_ packet: Data, priority: Bool) {
+        let outerFrame = Data([0x1D, 0x60, 0x04, 0x00, 0, 0, 0, 0, 0, 0]) + packet
+        if pendingFrame.isEmpty {
+            pendingFrame = outerFrame
+            nextByte = 0
+            lastFrameSize = packet.count
+            drain()
+        } else if priority {
+            queuedFrames.insert(outerFrame, at: 0)
+            // Avoid old dashboard images delaying an important answer.
+            queuedFrames = Array(queuedFrames.prefix(5))
+            status = "Jarvis lens frame queued behind active Bluetooth image."
+        } else {
+            // Keep the latest dashboard refresh, not a backlog of stale frames.
+            if queuedFrames.isEmpty { queuedFrames.append(outerFrame) }
+            else { queuedFrames[queuedFrames.count-1] = outerFrame }
+        }
     }
 
     func speak(_ text: String) {
@@ -214,9 +233,15 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate {
             nextByte += written
         }
         if nextByte == pendingFrame.count {
-            status = "Sent \(lastFrameSize) bytes to Solos protocol. Check your glasses to confirm it displays."
+            hudFramesSent += 1
+            status = "HUD frame #\(hudFramesSent) transmitted (\(lastFrameSize) bytes). Check the actual lens."
             pendingFrame = Data()
             nextByte = 0
+            if !queuedFrames.isEmpty {
+                pendingFrame = queuedFrames.removeFirst()
+                lastFrameSize = max(0, pendingFrame.count - 10)
+                drain()
+            }
         }
     }
 }
