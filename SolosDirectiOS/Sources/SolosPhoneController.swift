@@ -37,6 +37,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var lastQuestion = ""
     private var continuousWakeWanted = false
     private var awaitingSpeechCompletion = false
+    private var recognitionGeneration = 0
+    private var restartScheduled = false
     private var timer: Timer?
     private var lastPedometerDay = Calendar.current.startOfDay(for: Date())
     private var asking = false
@@ -231,18 +233,28 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     // The dedicated OLED lens renderer displays complete answer pages.
                     // Avoid a competing raw HUD packet that can overwrite them.
                     if UserDefaults.standard.object(forKey: "jarvisSpeakAnswers") as? Bool ?? true {
-                        // Stop microphone capture before playback: the recognition session
-                        // otherwise keeps the audio route in record mode on some iPhones.
-                        let shouldResume = self.continuousWakeWanted
-                        self.stopListening()
-                        self.continuousWakeWanted = shouldResume
+                        // Full-duplex voice processing lets the mic stay open
+                        // during speech. iOS voiceChat enables system acoustic echo
+                        // cancellation where the selected audio route supports it.
+                        let bargeIn = UserDefaults.standard.bool(forKey:"jarvisLockScreenWake")
+                        if !bargeIn {
+                            let shouldResume = self.continuousWakeWanted
+                            self.stopListening()
+                            self.continuousWakeWanted = shouldResume
+                        }
                         do {
                             let audio = AVAudioSession.sharedInstance()
-                            try audio.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .allowBluetoothA2DP])
-                            try audio.setActive(true, options: .notifyOthersOnDeactivation)
-                            self.voiceStatus = "Speaking Jarvis answer through " + self.accessory.audioRoute
+                            if bargeIn {
+                                try audio.setCategory(.playAndRecord, mode:.voiceChat,
+                                                      options:[.defaultToSpeaker,.allowBluetooth,.mixWithOthers])
+                            } else {
+                                try audio.setCategory(.playback, mode:.spokenAudio,
+                                                      options:[.duckOthers,.allowBluetoothA2DP])
+                            }
+                            try audio.setActive(true)
+                            self.voiceStatus = bargeIn ? "Speaking and listening for Hey Jarvis" : "Speaking Jarvis answer"
                         } catch {
-                            self.voiceStatus = "Spoken audio route: \(error.localizedDescription)"
+                            self.voiceStatus = "Audio route: \(error.localizedDescription)"
                         }
                         self.awaitingSpeechCompletion = true
                         self.accessory.speak(result.content)
@@ -273,6 +285,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
     private func beginRecording() {
         guard !listening else { return }
+        recognitionGeneration += 1
+        let generation = recognitionGeneration
         guard let speechRecognizer, speechRecognizer.isAvailable, speechRecognizer.supportsOnDeviceRecognition else {
             voiceStatus = "This iPhone language pack does not support offline speech. Use typed questions."
             return
@@ -284,7 +298,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         guard let request = recognitionRequest else { return }
         do {
             let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.record, mode: .measurement, options: [.duckOthers])
+            try audio.setCategory(.playAndRecord, mode:.voiceChat, options:[.defaultToSpeaker,.allowBluetooth,.mixWithOthers])
             try audio.setActive(true, options: .notifyOthersOnDeactivation)
             let node = audioEngine.inputNode
             let format = node.outputFormat(forBus: 0)
@@ -295,18 +309,27 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             voiceStatus = "Listening for Hey Jarvis (iPhone microphone)"
             speechTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
                 DispatchQueue.main.async {
-                    guard let self else { return }
+                    guard let self, self.recognitionGeneration == generation else { return }
                     if let result {
                         let heard = result.bestTranscription.formattedString
                         self.transcribed = heard
                         if let range = heard.range(of: "hey jarvis", options: .caseInsensitive), !self.heardWake {
+                            // Barge in: stop the current spoken answer immediately.
+                            // The mic can then capture the new question.
+                            if self.accessory.isSpeaking {
+                                self.accessory.interruptSpeech()
+                                self.awaitingSpeechCompletion = false
+                            }
                             let question = String(heard[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
                             if !question.isEmpty && (result.isFinal || question.count > 8) {
                                 self.heardWake = true
                                 self.stopListening()
                                 self.continuousWakeWanted = true
-                                self.ask(question)
-                            } else { self.voiceStatus = "Hey Jarvis heard! Speak your question..." }
+                                if !self.asking { self.ask(question) }
+                                else { self.voiceStatus = "Jarvis is finishing the previous question; try again." }
+                            } else {
+                                self.voiceStatus = "Hey Jarvis heard! Speak your question..."
+                            }
                         }
                         if result.isFinal && self.listening && !self.heardWake {
                             self.stopListening()
@@ -316,7 +339,18 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                             }
                         }
                     }
-                    if error != nil && self.listening { self.stopListening(); self.voiceStatus = "Voice stopped; tap Start to retry" }
+                    if let error, self.listening {
+                        let rearm = self.continuousWakeWanted
+                        self.stopListening()
+                        self.continuousWakeWanted = rearm
+                        self.voiceStatus = "Recognition interrupted: \(error.localizedDescription). Restarting..."
+                        if rearm {
+                            DispatchQueue.main.asyncAfter(deadline:.now()+1.2) { [weak self] in
+                                guard let self, self.continuousWakeWanted, !self.listening else { return }
+                                self.startListening()
+                            }
+                        }
+                    }
                 }
             }
         } catch {
@@ -326,6 +360,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
     func stopListening() {
         continuousWakeWanted = false
+        recognitionGeneration += 1
         if audioEngine.isRunning { audioEngine.stop() }
         audioEngine.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
