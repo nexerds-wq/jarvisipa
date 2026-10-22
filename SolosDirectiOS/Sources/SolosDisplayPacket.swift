@@ -8,6 +8,8 @@ import CoreGraphics
 enum SolosDisplayPacket {
     static let width = 428
     static let height = 240
+    static var sharpVision: Bool { UserDefaults.standard.bool(forKey: "solosVisionBold") }
+    static var giantVision: Bool { UserDefaults.standard.bool(forKey: "solosVisionGiant") }
 
     static func render(message: String) -> UIImage {
         let size = CGSize(width: width, height: height)
@@ -18,7 +20,7 @@ enum SolosDisplayPacket {
 
             let cyan = UIColor(red: 0.22, green: 0.92, blue: 0.90, alpha: 1)
             let titleStyle: [NSAttributedString.Key: Any] = [
-                .font: UIFont.monospacedSystemFont(ofSize: 25, weight: .bold),
+                .font: UIFont.monospacedSystemFont(ofSize: sharpVision ? 28 : 25, weight: sharpVision ? .black : .bold),
                 .foregroundColor: cyan
             ]
             ("JARVIS  /  SOLOS" as NSString).draw(at: CGPoint(x: 20, y: 14), withAttributes: titleStyle)
@@ -32,13 +34,13 @@ enum SolosDisplayPacket {
 
             let bodyStyle = NSMutableParagraphStyle()
             bodyStyle.lineBreakMode = .byWordWrapping
-            bodyStyle.lineSpacing = 4
+            bodyStyle.lineSpacing = giantVision ? 5 : 4
             let bodyAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 23, weight: .medium),
+                .font: UIFont.systemFont(ofSize: giantVision ? 37 : (sharpVision ? 31 : 23), weight: sharpVision ? .black : .medium),
                 .foregroundColor: UIColor.white,
                 .paragraphStyle: bodyStyle
             ]
-            (String(message.prefix(145)) as NSString).draw(
+            (String(message.prefix(giantVision ? 105 : 145)) as NSString).draw(
                 in: CGRect(x: 20, y: 66, width: 388, height: 130),
                 withAttributes: bodyAttributes
             )
