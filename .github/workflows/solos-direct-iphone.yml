@@ -1,0 +1,39 @@
+name: Build Solos Direct iPhone IPA
+on:
+  push:
+    branches: [solos-iphone-direct-ai]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Xcode
+        run: |
+          ls -1 /Applications | grep Xcode
+          xcodebuild -version
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+      - name: Generate Xcode project
+        working-directory: SolosDirectiOS
+        run: xcodegen generate
+      - name: Build unsigned iOS app
+        working-directory: SolosDirectiOS
+        run: |
+          xcodebuild -project SolosDirect.xcodeproj -scheme SolosDirect -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Package IPA
+        run: |
+          set -e
+          mkdir -p ipa/Payload
+          ditto SolosDirectiOS/build/Build/Products/Release-iphoneos/SolosDirect.app ipa/Payload/SolosDirect.app
+          (cd ipa && zip -qry ../SolosDirect-iPhone-unsigned.ipa Payload)
+          unzip -t SolosDirect-iPhone-unsigned.ipa >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SolosDirect-iPhone-IPA-unsigned
+          path: SolosDirect-iPhone-unsigned.ipa
+          if-no-files-found: error
