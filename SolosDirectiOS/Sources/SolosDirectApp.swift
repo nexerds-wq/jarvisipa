@@ -14,9 +14,11 @@ struct SolosDirectApp: App {
                     if phase == .active {
                         phone.refreshStepsOnly()
                         phone.accessory.refresh()
-                    } else if phase == .background {
-                        // Background Siri shortcuts are handled by App Intents,
-                        // not by pretending the microphone can listen indefinitely.
+                        if UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") && !phone.listening {
+                            phone.startListening()
+                        }
+                    } else if phase == .background &&
+                                !UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
                         phone.stopListening()
                     }
                 }
@@ -39,6 +41,7 @@ struct SolosDirectHome: View {
     @AppStorage("solosAutoDashboard") private var autoDashboard = true
     @AppStorage("jarvisSpeakAnswers") private var jarvisSpeakAnswers = true
     @AppStorage("jarvisScreenOffHUD") private var screenOffHUD = false
+    @AppStorage("jarvisLockScreenWake") private var lockScreenWake = false
     @State private var lastDashboardMinute = ""
     @State private var page = 0
     @State private var lastOledMessage = ""
@@ -59,7 +62,13 @@ struct SolosDirectHome: View {
                             .font(.subheadline)
                         Toggle("Speak Jarvis answers through phone or Bluetooth audio", isOn: $jarvisSpeakAnswers)
                             .tint(.mint)
-                        Text("The on-screen Hey Jarvis listener is foreground-only. A custom always-on wake word after force-quit is not available to sideloaded apps.")
+                        Toggle("HEY JARVIS • CONTINUOUS MIC (EXPERIMENTAL)", isOn:$lockScreenWake)
+                            .tint(.mint)
+                            .onChange(of: lockScreenWake) { _, armed in
+                                if armed { phone.startListening() }
+                                else { phone.stopListening() }
+                            }
+                        Text("Turn this on once while the app is open. The microphone will attempt to keep listening when locked, then re-arm after Jarvis speaks. Continuous recording uses more battery; iOS may suspend recognition, and it cannot run after force-quit. Siri voice shortcuts are the reliable locked-screen fallback.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(14)
                         .background(Color(red:0.045,green:0.095,blue:0.12),in:RoundedRectangle(cornerRadius:14))
@@ -194,7 +203,10 @@ struct SolosDirectHome: View {
             .background(Color(red: 0.02, green: 0.055, blue: 0.075))
             .navigationTitle("SOLOS DIRECT")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear { configureHandsFree() }
+            .onAppear {
+                configureHandsFree()
+                if lockScreenWake && !phone.listening { phone.startListening() }
+            }
             .onChange(of: accessory.connectedProtocol) { _, proto in
                 if !proto.isEmpty {
                     navigation.enableBackgroundDashboard(screenOffHUD)
@@ -395,7 +407,7 @@ struct SolosDirectHome: View {
             Text("SOLOS  /  iPHONE")
                 .font(.system(.title2, design: .monospaced).bold())
                 .foregroundStyle(.mint)
-            Text("V10: Siri voice answers • Background driving guidance • Daily steps.")
+            Text("V12: Jarvis OLED answers • Spoken replies • Experimental locked-screen voice.")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .padding(.vertical, 10)
