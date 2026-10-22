@@ -36,12 +36,24 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var heardWake = false
     private var lastQuestion = ""
     private var continuousWakeWanted = false
+    private var awaitingSpeechCompletion = false
     private var timer: Timer?
     private var lastPedometerDay = Calendar.current.startOfDay(for: Date())
     private var asking = false
 
     override init() {
         super.init()
+        accessory.onSpeechCompleted = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.awaitingSpeechCompletion = false
+                guard self.continuousWakeWanted, !self.listening else { return }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.8) { [weak self] in
+                    guard let self, self.continuousWakeWanted, !self.listening else { return }
+                    self.startListening()
+                }
+            }
+        }
         location.delegate = self
         location.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         central = CBCentralManager(delegate: self, queue: nil)
@@ -198,8 +210,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             guard let self else { return }
             defer {
                 self.asking = false
-                if self.continuousWakeWanted {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 35.0) { [weak self] in
+                if self.continuousWakeWanted && !self.awaitingSpeechCompletion {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                         guard let self, self.continuousWakeWanted, !self.listening else { return }
                         self.startListening()
                     }
@@ -232,6 +244,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                         } catch {
                             self.voiceStatus = "Spoken audio route: \(error.localizedDescription)"
                         }
+                        self.awaitingSpeechCompletion = true
                         self.accessory.speak(result.content)
                     }
                 } catch {
@@ -242,6 +255,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         }
     }
     func startListening() {
+        // Foreground opt-in keeps an audio recording session active. iOS may
+        // allow recording to continue when locked, but not after force-quit.
         continuousWakeWanted = true
         SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
             DispatchQueue.main.async {
