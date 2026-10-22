@@ -17,6 +17,10 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     @Published var discoveredBLE = [String]()
     @Published var bleState = "Bluetooth scan not started"
     @Published var steps = "–"
+    @Published var distance = "–"
+    @Published var battery = "–"
+    @Published var motionStatus = "Checking the motion sensor..."
+    @Published var locationStatus = "Location permission not checked"
     @Published var speed = "–"
     @Published var coordinates = "GPS not ready"
     @Published var now = Date()
@@ -41,6 +45,11 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         central = CBCentralManager(delegate: self, queue: nil)
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.now = Date()
+            if let device = self {
+                let level = UIDevice.current.batteryLevel
+                let value = level >= 0 ? String(format: "%.0f%%", level * 100) : "N/A"
+                if device.battery != value { device.battery = value }
+            }
         }
     }
     var clock: String {
@@ -50,27 +59,84 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         DateFormatter.localizedString(from: now, dateStyle: .medium, timeStyle: .none)
     }
     var dashboard: String {
-        "\(clock)   \(dateLine)\nSteps: \(steps)   Speed: \(speed)\n\(coordinates)"
+        "\(clock)  \(DateFormatter.localizedString(from: now, dateStyle: .short, timeStyle: .none))\nSTEPS \(steps)  DIST \(distance)\nBAT \(battery)  SPEED \(speed)\n\(coordinates)"
     }
     func refreshSensors() {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let level = UIDevice.current.batteryLevel
+        battery = level >= 0 ? String(format: "%.0f%%", level * 100) : "N/A"
+
         location.requestWhenInUseAuthorization()
-        if CLLocationManager.locationServicesEnabled() { location.startUpdatingLocation() }
-        guard CMPedometer.isStepCountingAvailable() else { steps = "No sensor"; return }
+        refreshLocationPermission()
+
+        guard CMPedometer.isStepCountingAvailable() else {
+            steps = "N/A"
+            distance = "N/A"
+            motionStatus = "Step counter unavailable on this device."
+            return
+        }
         let start = Calendar.current.startOfDay(for: Date())
-        pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, _ in
-            DispatchQueue.main.async { self?.steps = data?.numberOfSteps.stringValue ?? "Unavailable" }
+        motionStatus = "Reading steps since midnight..."
+        pedometer.stopUpdates()
+        pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.updatePedometer(data: data, error: error)
+            }
         }
-        pedometer.startUpdates(from: start) { [weak self] data, _ in
-            DispatchQueue.main.async { self?.steps = data?.numberOfSteps.stringValue ?? "Unavailable" }
+        pedometer.startUpdates(from: start) { [weak self] data, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.updatePedometer(data: data, error: error)
+            }
         }
+    }
+    private func updatePedometer(data: CMPedometerData?, error: Error?) {
+        if let error {
+            motionStatus = "Steps unavailable: \(error.localizedDescription). Check Settings → Privacy → Motion & Fitness."
+            return
+        }
+        guard let data else {
+            motionStatus = "Waiting for today's step data."
+            return
+        }
+        steps = data.numberOfSteps.stringValue
+        if let meters = data.distance?.doubleValue {
+            distance = String(format: "%.2f mi", meters / 1609.344)
+        } else {
+            distance = "N/A"
+        }
+        motionStatus = "Steps are from today's iPhone motion history."
+    }
+    private func refreshLocationPermission() {
+        guard CLLocationManager.locationServicesEnabled() else {
+            locationStatus = "Location Services OFF in Settings"
+            return
+        }
+        switch location.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            locationStatus = "GPS enabled. Move near a window/outdoors for a position."
+            location.startUpdatingLocation()
+        case .notDetermined:
+            locationStatus = "Waiting for location permission..."
+        case .denied, .restricted:
+            locationStatus = "Location denied. Allow While Using App in Settings."
+        @unknown default:
+            locationStatus = "GPS authorization unknown"
+        }
+    }
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        refreshLocationPermission()
     }
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let item = locations.last else { return }
-        coordinates = String(format: "GPS %.5f, %.5f", item.coordinate.latitude, item.coordinate.longitude)
+        coordinates = String(format: "GPS %.4f, %.4f", item.coordinate.latitude, item.coordinate.longitude)
+        locationStatus = String(format: "GPS accuracy: ±%.0f m", max(0, item.horizontalAccuracy))
         speed = item.speed >= 0 ? String(format: "%.1f mph", item.speed * 2.236936) : "–"
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        coordinates = "GPS: \(error.localizedDescription)"
+        coordinates = "GPS: unavailable"
+        locationStatus = error.localizedDescription
     }
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         bleState = central.state == .poweredOn ? "Bluetooth on; ready to scan" : "Bluetooth: \(central.state.rawValue)"
