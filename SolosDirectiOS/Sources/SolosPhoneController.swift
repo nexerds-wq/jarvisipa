@@ -363,7 +363,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     // Preserve the typed error and underlying error codes for troubleshooting.
     private static func describeModelFailure(_ error: Error) -> String {
         let ns = error as NSError
-        var details = String(reflecting: error) + " [\\(ns.domain):\\(ns.code)]"
+        var details = String(reflecting: error) + " [\(ns.domain):\(ns.code)]"
         if let typed = error as? LanguageModelSession.GenerationError {
             if let reason = typed.failureReason, !reason.isEmpty {
                 details += " Reason: " + reason
@@ -387,7 +387,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     // Runs only when the user enables online fallback in Settings.
     private static func wikipediaAnswer(for question: String) async throws -> String {
         let clean = question.replacingOccurrences(
-            of: #"(?i)^\\s*(who\\s+(is|was|are|were)|what\\s+(is|was|are|were)|tell\\s+me\\s+about|explain)\\s+"#,
+            of: #"(?i)^\s*(who\s+(is|was|are|were)|what\s+(is|was|are|were)|tell\s+me\s+about|explain)\s+"#,
             with:"", options:.regularExpression
         ).trimmingCharacters(in:.whitespacesAndNewlines)
         guard clean.count >= 2 && clean.count <= 150 else {
