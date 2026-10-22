@@ -14,6 +14,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     @Published var transcribed = ""
     @Published var voiceStatus = "Not listening"
     @Published var listening = false
+    @Published var wakeEnabled = false
     @Published var discoveredBLE = [String]()
     @Published var bleState = "Bluetooth scan not started"
     @Published var steps = "–"
@@ -30,6 +31,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var speechTask: SFSpeechRecognitionTask?
     private var heardWake = false
+    private var awaitingQuestion = false
+    private var wakeRestart: DispatchWorkItem?
     private var lastQuestion = ""
     private var timer: Timer?
     private var asking = false
@@ -100,7 +103,17 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         aiAnswer = "YOU: \(trimmed)\n\nJARVIS THINKING..."
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.asking = false }
+            defer {
+                self.asking = false
+                if self.wakeEnabled {
+                    let restart = DispatchWorkItem { [weak self] in
+                        guard self?.wakeEnabled == true else { return }
+                        self?.startListening()
+                    }
+                    self.wakeRestart = restart
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: restart)
+                }
+            }
             if #available(iOS 26.0, *) {
                 guard SystemLanguageModel.default.isAvailable else {
                     self.aiStatus = "Apple Intelligence on-device model is unavailable. Enable Apple Intelligence and download its model in Settings."
@@ -121,6 +134,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         }
     }
     func startListening() {
+        wakeEnabled = true
         SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -162,20 +176,30 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     if let result {
                         let heard = result.bestTranscription.formattedString
                         self.transcribed = heard
-                        if let range = heard.range(of: "hey jarvis", options: .caseInsensitive), !self.heardWake {
+                        if let range = heard.range(of: "hey jarvis", options: .caseInsensitive) {
                             let question = String(heard[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
                             if !question.isEmpty && (result.isFinal || question.count > 8) {
-                                self.heardWake = true
-                                self.stopListening()
+                                self.awaitingQuestion = false
+                                self.teardownSpeech()
                                 self.ask(question)
-                            } else { self.voiceStatus = "Hey Jarvis heard! Speak your question..." }
+                                return
+                            } else {
+                                self.awaitingQuestion = true
+                                self.voiceStatus = "HEY JARVIS detected. Ask your question..."
+                            }
+                        } else if self.awaitingQuestion && result.isFinal && !heard.isEmpty {
+                            self.awaitingQuestion = false
+                            self.teardownSpeech()
+                            self.ask(heard)
+                            return
                         }
-                        if result.isFinal && self.listening && !self.heardWake {
-                            self.stopListening()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { self.startListening() }
+                        if result.isFinal && self.listening {
+                            self.restartWakeSoon()
                         }
                     }
-                    if error != nil && self.listening { self.stopListening(); self.voiceStatus = "Voice stopped; tap Start to retry" }
+                    if error != nil && self.listening {
+                        self.restartWakeSoon()
+                    }
                 }
             }
         } catch {
@@ -183,7 +207,24 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             stopListening()
         }
     }
+    private func restartWakeSoon() {
+        teardownSpeech()
+        guard wakeEnabled else { return }
+        let retry = DispatchWorkItem { [weak self] in
+            guard self?.wakeEnabled == true else { return }
+            self?.startListening()
+        }
+        wakeRestart = retry
+        DispatchQueue.main.asyncAfter(deadline: .now()+0.7, execute: retry)
+    }
     func stopListening() {
+        wakeEnabled = false
+        awaitingQuestion = false
+        wakeRestart?.cancel()
+        wakeRestart = nil
+        teardownSpeech()
+    }
+    private func teardownSpeech() {
         if audioEngine.isRunning { audioEngine.stop() }
         audioEngine.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
