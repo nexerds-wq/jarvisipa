@@ -3,12 +3,23 @@ import MapKit
 
 @main
 struct SolosDirectApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var phone = SolosPhoneController()
     var body: some Scene {
         WindowGroup {
             SolosDirectHome(phone: phone)
                 .preferredColorScheme(.dark)
                 .onAppear { phone.refreshSensors(); phone.accessory.refresh() }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active {
+                        phone.refreshStepsOnly()
+                        phone.accessory.refresh()
+                    } else if phase == .background {
+                        // Background Siri shortcuts are handled by App Intents,
+                        // not by pretending the microphone can listen indefinitely.
+                        phone.stopListening()
+                    }
+                }
         }
     }
 }
@@ -26,6 +37,7 @@ struct SolosDirectHome: View {
     @State private var customHUD = "HELLO FROM IPHONE"
     @AppStorage("solosOrientationMode") private var orientationMode = 0
     @AppStorage("solosAutoDashboard") private var autoDashboard = true
+    @AppStorage("jarvisSpeakAnswers") private var jarvisSpeakAnswers = true
     @State private var lastDashboardMinute = ""
     @State private var page = 0
     @State private var lastOledMessage = ""
@@ -34,6 +46,19 @@ struct SolosDirectHome: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("VOICE JARVIS / LOCK SCREEN")
+                            .font(.headline).foregroundStyle(.mint)
+                        Text("With Siri enabled, say: “Hey Siri, ask Solos Jarvis a question.” Siri can speak the answer without opening this app.")
+                            .font(.subheadline)
+                        Text("Or say: “Hey Siri, my steps with Solos Jarvis” to hear your step count since midnight.")
+                            .font(.subheadline)
+                        Toggle("Speak Jarvis answers through phone or Bluetooth audio", isOn: $jarvisSpeakAnswers)
+                            .tint(.mint)
+                        Text("The on-screen Hey Jarvis listener is foreground-only. A custom always-on wake word after force-quit is not available to sideloaded apps.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(14)
+                        .background(Color(red:0.045,green:0.095,blue:0.12),in:RoundedRectangle(cornerRadius:14))
                     handsFreeCard
                     navigationCard
                     SolosAccessoryCard(manager: phone.accessory)
@@ -95,7 +120,8 @@ struct SolosDirectHome: View {
                             Button("REFRESH SENSORS") { phone.refreshSensors() }
                                 .buttonStyle(.bordered)
                         }
-                        Text("GPS needs Location permission; daily steps and distance need Motion & Fitness permission. Live updates run while this app is open.")
+                        Text("Daily steps are re-read after reopening. During navigation, location callbacks also refresh them with the screen locked. A force-quit stops live HUD updates.")
+
                             .font(.caption).foregroundStyle(.secondary)
                     }.card()
 
@@ -188,6 +214,12 @@ struct SolosDirectHome: View {
             sendModeHUD(selected)
         }
         navigation.onUpdate = { if handsFree.mode == 1 { sendModeHUD(1) } }
+        navigation.onBackgroundTick = {
+            phone.refreshStepsOnly()
+            if autoDashboard && handsFree.mode == 0 {
+                sendModeHUD(0)
+            }
+        }
         if autoDashboard && !accessory.connectedProtocol.isEmpty {
             sendModeHUD(handsFree.mode)
         }
@@ -248,7 +280,8 @@ struct SolosDirectHome: View {
                 .frame(height:210)
                 .clipShape(RoundedRectangle(cornerRadius:14))
             }
-            Text("Apple Maps searches and routing need internet. Voice uses iPhone text-to-speech. Navigation and HUD updates require the app active; this is not Google Maps.")
+            Text("Apple Maps routing needs internet. Once you START NAVIGATION, GPS and spoken turns can continue with the screen locked or another app visible. Do not swipe-force-close Jarvis. Audio follows your iPhone Bluetooth output.")
+
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(15)
@@ -312,7 +345,7 @@ struct SolosDirectHome: View {
             Text("SOLOS  /  iPHONE")
                 .font(.system(.title2, design: .monospaced).bold())
                 .foregroundStyle(.mint)
-            Text("One phone. On-device JARVIS. Direct display test.")
+            Text("V10: Siri voice answers • Background driving guidance • Daily steps.")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .padding(.vertical, 10)
