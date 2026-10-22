@@ -30,7 +30,7 @@ struct AskJarvisIntent: AppIntent {
         do {
             let session = LanguageModelSession(instructions: "You are Jarvis, a concise and helpful private iPhone smart glasses assistant. Respond in one or two spoken sentences. Do not invent live information. Be clear and accurate.")
             let result = try await session.respond(to: prompt)
-            return .result(dialog: IntentDialog(stringLiteral: String(result.content.prefix(600))))
+            return .result(dialog: IntentDialog("\(String(result.content.prefix(600)))"))
         } catch {
             return .result(dialog: IntentDialog("Jarvis couldn't answer just now. Please try again."))
         }
