@@ -34,7 +34,6 @@ Java_com_solos_legacyhud_NativeJarvis_load(JNIEnv * env, jclass, jstring file) {
     std::string path=to_utf8(env,file);
     llama_model_params params=llama_model_default_params();
     params.n_gpu_layers=0;
-    params.use_mmap=true;
     g_model=llama_model_load_from_file(path.c_str(),params);
     if(!g_model) return env->NewStringUTF("AI could not load: not enough RAM or invalid GGUF.");
     return env->NewStringUTF("READY");
