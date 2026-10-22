@@ -1,7 +1,7 @@
 name: Build Solos Direct iPhone IPA
 on:
   push:
-    branches: [solos-iphone-direct-ai, solos-iphone-v4-stable-flip, solos-iphone-v6-stable-features, solos-iphone-v7-orientation-dashboard, solos-iphone-v8-handsfree, solos-iphone-v9-voice-navigation, solos-iphone-v10-background-voice, solos-iphone-v11-spoken-screen-answers, solos-iphone-v12-jarvis-hud]
+    branches: [solos-iphone-direct-ai, solos-iphone-v4-stable-flip, solos-iphone-v6-stable-features, solos-iphone-v7-orientation-dashboard, solos-iphone-v8-handsfree, solos-iphone-v9-voice-navigation, solos-iphone-v10-background-voice, solos-iphone-v11-spoken-screen-answers, solos-iphone-v12-jarvis-hud, solos-iphone-v13-lock-bargein]
   workflow_dispatch:
 permissions:
   contents: read
