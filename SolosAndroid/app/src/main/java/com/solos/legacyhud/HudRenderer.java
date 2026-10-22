@@ -7,13 +7,13 @@ import java.util.*;
 public class HudRenderer {
   public static Bitmap render(int mode, String speech, int steps, double meters, double speedMps,
                               double lat, double lon, boolean gps, String weather,
-                              String weatherSource, String note) {
+                              String weatherSource, String note, String pinnedReminder, int reminderCount, boolean recordingReminder) {
     Bitmap bmp=Bitmap.createBitmap(428,240,Bitmap.Config.ARGB_8888);
     Canvas c=new Canvas(bmp); c.drawColor(Color.BLACK);
     Paint p=new Paint(3);
     int mint=Color.rgb(88,250,190), white=Color.WHITE, dim=Color.rgb(135,166,164), amber=Color.rgb(245,189,70);
     rect(c,p,0,0,428,4,mint);
-    txt(c,p,"SOLOS  /  "+(mode==0?"OFFLINE DASHBOARD":mode==1?"LIVE CAPTIONS":"ES > EN TRANSLATOR"),16,24,17,mint,true);
+    txt(c,p,"SOLOS  /  "+(mode==0?"OFFLINE DASHBOARD":mode==1?"LIVE CAPTIONS":mode==2?"ES > EN TRANSLATOR":"VOICE REMINDERS"),16,24,17,mint,true);
     String date=new SimpleDateFormat("EEE, MMM d",Locale.US).format(new Date());
     String time=new SimpleDateFormat("h:mm a",Locale.US).format(new Date());
     txt(c,p,time,16,76,45,white,true);
@@ -29,12 +29,22 @@ public class HudRenderer {
       txt(c,p,gps?String.format(Locale.US,"GPS %.5f, %.5f",lat,lon):"GPS: searching for satellites",16,192,17,gps?mint:amber,false);
       txt(c,p,"WEATHER: "+trim(weather,34),16,211,16,white,false);
       txt(c,p,trim(weatherSource,48),16,230,12,dim,false);
+    }else if(mode==3) {
+      txt(c,p,recordingReminder?"RECORDING - SAY STOP TO SAVE":"SAY START, YOUR REMINDER, STOP",16,119,17,recordingReminder?amber:mint,true);
+      line(c,p,16,130,411,130,dim);
+      String spoken=(speech==null||speech.trim().isEmpty())?
+        (pinnedReminder==null||pinnedReminder.isEmpty()?"No saved reminders yet":pinnedReminder):speech;
+      drawWrapped(c,p,spoken,16,161,393,22,22,white,3);
+      txt(c,p,"SAVED REMINDERS: "+reminderCount,16,229,14,dim,false);
     }else {
       line(c,p,16,111,411,111,dim);
       txt(c,p,mode==1?"HEARING ENGLISH":"HEARING SPANISH > ENGLISH",16,132,15,dim,false);
       String s=(speech==null||speech.trim().isEmpty())?"Listening...":speech.trim();
       drawWrapped(c,p,s,16,164,392,23,25,white,3);
-      txt(c,p,trim(note,55),16,229,13,mint,false);
+    }
+    if(mode!=3 && pinnedReminder!=null && !pinnedReminder.trim().isEmpty()) {
+      rect(c,p,0,215,428,25,Color.rgb(12,36,37));
+      txt(c,p,"REMINDER: "+trim(pinnedReminder,43),9,234,16,amber,true);
     }
     return bmp;
   }
