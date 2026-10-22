@@ -36,6 +36,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var heardWake = false
     private var lastQuestion = ""
     private var timer: Timer?
+    private var lastPedometerDay = Calendar.current.startOfDay(for: Date())
     private var asking = false
 
     override init() {
@@ -44,12 +45,20 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         location.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         central = CBCentralManager(delegate: self, queue: nil)
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.now = Date()
-            if let device = self {
-                let level = UIDevice.current.batteryLevel
-                let value = level >= 0 ? String(format: "%.0f%%", level * 100) : "N/A"
-                if device.battery != value { device.battery = value }
+            guard let device = self else { return }
+            let current = Date()
+            device.now = current
+            let today = Calendar.current.startOfDay(for: current)
+            if today != device.lastPedometerDay {
+                // Automatic midnight reset: query new day's steps instead of keeping yesterday.
+                device.lastPedometerDay = today
+                device.steps = "0"
+                device.distance = "0.00 mi"
+                device.refreshSensors()
             }
+            let level = UIDevice.current.batteryLevel
+            let value = level >= 0 ? String(format: "%.0f%%", level * 100) : "N/A"
+            if device.battery != value { device.battery = value }
         }
     }
     var clock: String {
@@ -76,6 +85,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             return
         }
         let start = Calendar.current.startOfDay(for: Date())
+        lastPedometerDay = start
         motionStatus = "Reading steps since midnight..."
         pedometer.stopUpdates()
         pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, error in
