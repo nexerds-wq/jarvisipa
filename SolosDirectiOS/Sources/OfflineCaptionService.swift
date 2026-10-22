@@ -73,6 +73,10 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     /// recognition when on-device recognition is not supported for the language.
     func start(locale:String, name:String, allowOnlineRecognition:Bool = false) {
         stop()
+        audioBuffers = 0
+        buffersCaptured = 0
+        lastDisplay = .distantPast
+        failureCount = 0
         desired = true
         localeCode = locale
         recognizedLanguage = name
