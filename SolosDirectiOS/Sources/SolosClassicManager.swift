@@ -31,7 +31,10 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     private var inputStream: InputStream?
     private var outputStream: OutputStream?
     private var pendingFrame = Data()
-    private var queuedFrames: [Data] = []
+    // Never queue a backlog of megabytes of obsolete bitmap frames.
+    // At most one urgent (message/answer) and one latest ordinary update.
+    private var queuedPriorityFrame: Data?
+    private var queuedLatestFrame: Data?
     private var nextByte = 0
     @Published private(set) var hudFramesSent = 0
 
@@ -116,7 +119,8 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         connectedName = ""
         connectedProtocol = ""
         pendingFrame = Data()
-        queuedFrames.removeAll()
+        queuedPriorityFrame = nil
+        queuedLatestFrame = nil
         nextByte = 0
     }
 
@@ -157,6 +161,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     // written Bluetooth packet corrupts the image on actual glasses.
     // Priority frames from Jarvis are queued ahead of dashboard refreshes.
     private func enqueuePacket(_ packet: Data, priority: Bool) {
+        // Preserves the EXACT manufacturer-protocol framing.
         let outerFrame = Data([0x1D, 0x60, 0x04, 0x00, 0, 0, 0, 0, 0, 0]) + packet
         if pendingFrame.isEmpty {
             pendingFrame = outerFrame
@@ -164,14 +169,13 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             lastFrameSize = packet.count
             drain()
         } else if priority {
-            queuedFrames.insert(outerFrame, at: 0)
-            // Avoid old dashboard images delaying an important answer.
-            queuedFrames = Array(queuedFrames.prefix(5))
-            status = "Jarvis lens frame queued behind active Bluetooth image."
+            // Newest critical frame wins. Older unsent HUD pages are stale
+            // after a new message, reply or screen has been requested.
+            queuedPriorityFrame = outerFrame
+            queuedLatestFrame = nil
         } else {
-            // Keep the latest dashboard refresh, not a backlog of stale frames.
-            if queuedFrames.isEmpty { queuedFrames.append(outerFrame) }
-            else { queuedFrames[queuedFrames.count-1] = outerFrame }
+            // Only keep latest normal screen; never displace a critical frame.
+            queuedLatestFrame = outerFrame
         }
     }
 
@@ -253,10 +257,17 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             status = "HUD frame #\(hudFramesSent) transmitted (\(lastFrameSize) bytes). Check the actual lens."
             pendingFrame = Data()
             nextByte = 0
-            if !queuedFrames.isEmpty {
-                pendingFrame = queuedFrames.removeFirst()
+            if let priority = queuedPriorityFrame {
+                pendingFrame = priority
+                queuedPriorityFrame = nil
+            } else if let latest = queuedLatestFrame {
+                pendingFrame = latest
+                queuedLatestFrame = nil
+            }
+            if !pendingFrame.isEmpty {
                 lastFrameSize = max(0, pendingFrame.count - 10)
-                drain()
+                // Continue at next writable stream event; do not recurse and
+                // monopolize the main run loop behind several full bitmaps.
             }
         }
     }
