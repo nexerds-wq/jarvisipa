@@ -122,7 +122,11 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         location.delegate = self
         location.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         central = CBCentralManager(delegate: self, queue: nil)
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        // A once-per-second @Published clock forced SwiftUI to rebuild the
+        // entire dashboard, previews and encoder 60 times each minute.
+        // The UI shows minute-level time; 15s is sufficient and keeps
+        // midnight and battery updates prompt without constant CPU churn.
+        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             guard let device = self else { return }
             let current = Date()
             device.now = current
