@@ -26,6 +26,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var starting = false
     private var lastDisplay = Date.distantPast
     private var generation = 0
+    private var tapInstalled = false
 
     func start(locale: String, name: String) {
         stop()
@@ -82,11 +83,16 @@ final class OfflineCaptionService: NSObject, ObservableObject {
             input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
                 next.append(buffer)
             }
+            tapInstalled = true
             engine.prepare()
             try engine.start()
             isListening = true
             status = "ON DEVICE • \(recognizedLanguage) • listening"
             let sequence = generation
+            DispatchQueue.main.asyncAfter(deadline:.now()+48) { [weak self] in
+                guard let self, self.desired, sequence == self.generation else { return }
+                self.reboot()
+            }
             task = speech.recognitionTask(with: next) { [weak self] result, error in
                 DispatchQueue.main.async {
                     guard let self, self.desired, sequence == self.generation else { return }
@@ -127,13 +133,17 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         cleanup()
         generation += 1
         status = "Restarting offline speech listener..."
+        restartTask?.cancel()
         let job = DispatchWorkItem { [weak self] in self?.recognize() }
         restartTask = job
         DispatchQueue.main.asyncAfter(deadline: .now()+0.65, execute: job)
     }
     private func cleanup() {
         if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)
+        if tapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
         request?.endAudio()
         task?.cancel()
         task = nil
