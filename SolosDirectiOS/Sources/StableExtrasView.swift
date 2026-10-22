@@ -40,7 +40,7 @@ struct StableExtrasView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Image(systemName: "eye.fill").foregroundStyle(accent)
-                    Text("SOLOS  /  V7  OLED").font(.system(size: 19, weight: .black, design: .monospaced))
+                    Text("SOLOS  /  V8  OLED").font(.system(size: 19, weight: .black, design: .monospaced))
                     Spacer()
                     Circle().fill(accessory.connectedProtocol.isEmpty ? Color.orange : accent)
                         .frame(width: 10, height: 10)
@@ -88,7 +88,7 @@ struct StableExtrasView: View {
                 if Task.isCancelled { return }
                 translatedText = result.targetText
                 translationStatus = "Translated locally; displaying in glasses."
-                accessory.sendHUD(result.targetText)
+                sendOled(mode: 2, text: result.targetText)
             } catch {
                 translationStatus = "Unavailable: \(error.localizedDescription). Try supported languages or connect to Wi-Fi once for a model download."
             }
@@ -96,16 +96,33 @@ struct StableExtrasView: View {
         .onChange(of: captions.partial) { _, newValue in
             if panel == 1 && !newValue.isEmpty && Date().timeIntervalSince(lastDisplaySent) > 1.8 {
                 lastDisplaySent = Date()
-                accessory.sendHUD(newValue)
+                sendOled(mode: 1, text: newValue)
             }
         }
         .onChange(of: captions.latestFinal) { _, newValue in
             if newValue.isEmpty { return }
             if panel == 1 {
-                accessory.sendHUD(newValue)
+                sendOled(mode: 1, text: newValue)
             } else if panel == 2 {
                 originalText = newValue
                 translate(newValue)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("SolosHandsFreeMode"))) { notification in
+            guard let selected = notification.userInfo?["mode"] as? Int else { return }
+            captions.stop()
+            if selected >= 1 && selected <= 3 { panel = selected }
+            if selected == 1 || selected == 2 {
+                let speech = selected == 1 ? captionLocale : source
+                let spokenName = name(speech)
+                if selected == 2 { prepareTranslation() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    captions.start(locale: speech, name: spokenName)
+                }
+            } else if selected == 3 {
+                phone.startListening()
+            } else {
+                phone.stopListening()
             }
         }
         .onChange(of: panel) { _, _ in
@@ -304,6 +321,16 @@ struct StableExtrasView: View {
         }
     }
 
+    private func sendOled(mode: Int, text: String) {
+        guard !accessory.connectedProtocol.isEmpty else { return }
+        let image = SolosProHUD.image(mode: mode,
+            clock: phone.clock, date: phone.dateLine,
+            steps: Int(phone.steps) ?? 0, distance: phone.distance,
+            speed: phone.speed, battery: phone.battery,
+            gps: phone.coordinates, message: text,
+            detail: "SOLOS • \(mode + 1)/5 • OFFLINE")
+        accessory.sendHUDImage(image)
+    }
     private func name(_ locale: String) -> String { speechLanguages.first(where: {$0.id == locale})?.name ?? locale }
 
     private func prepareTranslation() {
