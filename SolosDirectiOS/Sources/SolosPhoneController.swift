@@ -102,6 +102,25 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             }
         }
     }
+    // Re-query today's total without interrupting continuous pedometer monitoring.
+    // Used during active GPS navigation so the steps HUD stays fresh with screen locked.
+    func refreshStepsOnly() {
+        let today = Calendar.current.startOfDay(for: Date())
+        if today != lastPedometerDay {
+            lastPedometerDay = today
+            steps = "0"
+            distance = "0.00 mi"
+            refreshSensors()
+            return
+        }
+        guard CMPedometer.isStepCountingAvailable() else { return }
+        pedometer.queryPedometerData(from: today, to: Date()) { [weak self] data, error in
+            DispatchQueue.main.async {
+                self?.updatePedometer(data:data,error:error)
+            }
+        }
+    }
+
     private func updatePedometer(data: CMPedometerData?, error: Error?) {
         if let error {
             motionStatus = "Steps unavailable: \(error.localizedDescription). Check Settings → Privacy → Motion & Fitness."
@@ -193,11 +212,21 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     return
                 }
                 do {
-                    let session = LanguageModelSession(instructions: "You are JARVIS, a helpful offline smart glasses assistant. Give brief, accurate answers, one or two sentences. Do not claim access to the internet or live information.")
+                    let session = LanguageModelSession(instructions: "You are JARVIS, a helpful offline smart glasses assistant. Give brief, accurate spoken answers of one or two sentences. Do not claim access to internet or live information.")
                     let result = try await session.respond(to: trimmed)
                     self.aiAnswer = result.content
                     self.aiStatus = "Answered locally (no AI API key or computer)"
                     self.accessory.sendHUD(result.content)
+                    if UserDefaults.standard.object(forKey: "jarvisSpeakAnswers") as? Bool ?? true {
+                        do {
+                            let audio = AVAudioSession.sharedInstance()
+                            try audio.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+                            try audio.setActive(true)
+                        } catch {
+                            self.voiceStatus = "Spoken audio route: \(error.localizedDescription)"
+                        }
+                        self.accessory.speak(result.content)
+                    }
                 } catch {
                     self.aiStatus = "On-device JARVIS error: \(error.localizedDescription)"
                     self.aiAnswer = self.aiStatus
