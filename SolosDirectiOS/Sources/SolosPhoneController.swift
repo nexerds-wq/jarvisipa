@@ -199,7 +199,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             defer {
                 self.asking = false
                 if self.continuousWakeWanted {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) { [weak self] in
                         guard let self, self.continuousWakeWanted, !self.listening else { return }
                         self.startListening()
                     }
