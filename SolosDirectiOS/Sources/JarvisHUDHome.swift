@@ -22,6 +22,7 @@ struct JarvisHUDHome: View {
     @State private var smartTaskKind = "reminder"
     private let health = HKHealthStore()
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var mode = 0
     @State private var image: UIImage?
     @State private var lastFrameAt = Date.distantPast
@@ -244,6 +245,11 @@ struct JarvisHUDHome: View {
             if enabled && !hudQuitRequested { phone.startListening() }
             else { phone.stopListening() }
         }
+        .onChange(of:scenePhase) { _, phase in
+            if phase == .active && (mode == 2 || mode == 3) && !captions.isListening {
+                startCaptioning()
+            }
+        }
         .onChange(of:mediaButtonsForHUD) { _, enabled in
             if enabled { handsFree.enableMediaButtons() }
             else { handsFree.stop() }
@@ -265,6 +271,9 @@ struct JarvisHUDHome: View {
             JarvisVisionCalibrationWizard(accessory:accessory)
         }
         .onDisappear {
+            // A lock/background transition must not dismantle active caption
+            // capture or the HUD connection. iOS owns final suspension policy.
+            guard UIApplication.shared.applicationState == .active else { return }
             phone.onHUDVoiceCommand = nil
             accessory.onSpeechCompleted = nil
             handsFree.stop()
@@ -1049,16 +1058,28 @@ struct JarvisHUDHome: View {
         if mode == 4 && value != 4 {
             UserDefaults.standard.set(false, forKey:"jarvisMessagePinned")
         }
+        if mode == value {
+            if (value == 2 || value == 3) && !captions.isListening { startCaptioning() }
+            drawHUD()
+            return
+        }
+        let previousMode = mode
         mode = value
         captionFlushWork?.cancel()
         translationDebounceWork?.cancel()
         translationSessionReady = false
-        captions.stop()
+        if !(previousMode == 2 && value == 3 && language == "en-US") &&
+           !(previousMode == 3 && value == 2 && language == "en-US") {
+            captions.stop()
+        }
         translationContinuation?.finish()
         translationContinuation = nil
         translationConfiguration = nil
         phone.setHUDCaptionsActive(value == 2 || value == 3)
-        if value == 2 || value == 3 { startCaptioning() }
+        if value == 2 || value == 3 {
+            if !captions.isListening { startCaptioning() }
+            else if value == 3 { translationStatus = "Live speech capture continuing" }
+        }
         if value == 0 { phone.refreshSensors() }
         syncEmotionCues()
         drawHUD()
@@ -1066,7 +1087,7 @@ struct JarvisHUDHome: View {
 
     private func startCaptioning() {
         guard mode == 2 || mode == 3 else { return }
-        captions.stop()
+        if captions.isListening { captions.stop() }
         captionFlushWork?.cancel()
         translationDebounceWork?.cancel()
         heard = ""
