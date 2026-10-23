@@ -13,7 +13,7 @@ final class SolosHandsFreeEngine: NSObject, ObservableObject {
     }
 
     static let modeNames = ["DAILY DASHBOARD", "VOICE NAVIGATION",
-                            "LIVE CAPTIONS", "TRANSLATE TO ENGLISH", "MESSAGES"]
+                            "LIVE CAPTIONS", "TRANSLATE TO ENGLISH", "MESSAGES", "JARVIS", "TIMERS"]
     @Published private(set) var mode = 0
     @Published private(set) var status = "Use NEXT/BACK on the phone or learn glasses button HEX."
     @Published private(set) var lastInput = "No remote control events received"
