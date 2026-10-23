@@ -595,10 +595,11 @@ struct SolosDirectHome: View {
             (sourceOptions.first(where:{$0.code == sourceLocale})?.name ?? sourceLocale)
         if mode == 3 && !locale.hasPrefix("en") {
             let source = String(locale.split(separator:"-").first ?? "es")
+            // Xcode 26.3 uses traditional low-latency models by default.
+            // The explicit preferredStrategy initializer requires a later SDK.
             translationConfiguration = TranslationSession.Configuration(
                 source:Locale.Language(identifier:source),
-                target:Locale.Language(identifier:"en"),
-                preferredStrategy:.lowLatency
+                target:Locale.Language(identifier:"en")
             )
         } else {
             translationConfiguration = nil
