@@ -642,7 +642,6 @@ struct JarvisHUDHome: View {
                 Text("Right-eye readability settings applied. This changes pixels and text, not optical prescription power.")
                     .font(.caption2).foregroundStyle(.green)
             }
-                .font(.caption2).foregroundStyle(.secondary)
             Button("START VISION CALIBRATION WIZARD") {
                 visionWizardPresented = true
             }
