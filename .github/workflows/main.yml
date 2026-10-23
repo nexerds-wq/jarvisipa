@@ -1,19 +1,30 @@
-name: Build Solos HUD iOS IPA (unsigned)
+name: Build Jarvis Solos HUD IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "solos_hud/**"
+      - ".github/workflows/build-ipa.yml"
 
 permissions:
   contents: read
 
-jobs:
-  ios:
-    name: Build iOS on macOS
-    runs-on: macos-15
-    timeout-minutes: 60
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
+  build-unsigned-ipa:
+    name: Build iPhone app
+    runs-on: macos-latest
+    timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: solos_hud
     steps:
-      - name: Check out Solos HUD source
+      - name: Get project files
         uses: actions/checkout@v4
 
       - name: Install Flutter
@@ -22,41 +33,38 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Show build tool versions
+      - name: Show build tools
         run: |
           flutter --version
           xcodebuild -version
           pod --version
 
-      - name: Get Flutter packages
-        working-directory: solos_hud
+      - name: Get Flutter dependencies
         run: flutter pub get
 
-      - name: Add missing iOS speech permission descriptions
-        working-directory: solos_hud
-        run: |
-          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Solos HUD uses your microphone when you use voice commands." ios/Runner/Info.plist
-          /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string Solos HUD uses speech recognition when you use voice commands." ios/Runner/Info.plist
-          plutil -lint ios/Runner/Info.plist
-
-      - name: Compile the actual iPhone app (no signing)
-        working-directory: solos_hud
+      - name: Build iOS without signing
         run: flutter build ios --release --no-codesign
 
-      - name: Package the built Runner.app into an IPA
+      - name: Package unsigned IPA
         run: |
           set -euo pipefail
-          test -d solos_hud/build/ios/iphoneos/Runner.app
-          mkdir -p "$RUNNER_TEMP/solos-ipa/Payload"
-          ditto solos_hud/build/ios/iphoneos/Runner.app "$RUNNER_TEMP/solos-ipa/Payload/Runner.app"
-          (cd "$RUNNER_TEMP/solos-ipa" && zip -qry "$GITHUB_WORKSPACE/SolosHUD-unsigned.ipa" Payload)
-          unzip -t SolosHUD-unsigned.ipa >/dev/null
-          ls -lh SolosHUD-unsigned.ipa
+          APP="build/ios/iphoneos/Runner.app"
+          test -d "$APP"
+          test -f "$APP/Info.plist"
+          test -f "$APP/Runner"
+          plutil -lint "$APP/Info.plist"
+          mkdir -p ipa/Payload
+          cp -R "$APP" ipa/Payload/
+          (
+            cd ipa
+            /usr/bin/ditto -c -k --sequesterRsrc --keepParent Payload Jarvis-Solos-HUD-unsigned.ipa
+          )
+          unzip -t ipa/Jarvis-Solos-HUD-unsigned.ipa | tail -n 3
 
-      - name: Upload downloadable unsigned IPA
+      - name: Upload downloadable IPA
         uses: actions/upload-artifact@v4
         with:
-          name: SolosHUD-iOS-unsigned
-          path: SolosHUD-unsigned.ipa
+          name: Jarvis-Solos-HUD-unsigned-IPA
+          path: solos_hud/ipa/Jarvis-Solos-HUD-unsigned.ipa
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
