@@ -24,6 +24,11 @@ struct JarvisHUDHome: View {
     @State private var translationDebounceWork: DispatchWorkItem?
     @State private var translationSessionReady = false
     @State private var lastVoiceHUDCommand = ""
+    @State private var hudSleeping = false
+    @State private var hudQuitRequested = false
+    @State private var lifecycleStatus = ""
+    @AppStorage("jarvisListenWhileMusic") private var listenWhileMusic = false
+    @AppStorage("jarvisMediaButtonsForHUD") private var mediaButtonsForHUD = false
     @State private var heard = ""
     @State private var translated = ""
     @State private var translationConfiguration: TranslationSession.Configuration?
@@ -103,7 +108,17 @@ struct JarvisHUDHome: View {
                             }
                         }
                     }
-                    modeControls
+                    if hudSleeping {
+                        section(hudQuitRequested ? "JARVIS CLOSED • SOFTWARE IDLE" : "HUD STANDBY") {
+                            Text(lifecycleStatus).font(.caption)
+                            Button("WAKE JARVIS / RESTORE HUD") { wakeJarvis() }
+                                .buttonStyle(.borderedProminent)
+                            Text("iOS apps cannot power off the phone or glasses hardware. Quit stops listening; tap Wake to resume.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        modeControls
+                    }
                     connectionSummary
                     if showConnection { connectionPanel }
                     if showSettings { settingsPanel }
@@ -125,7 +140,7 @@ struct JarvisHUDHome: View {
             handsFree.onModeChange = { newMode in selectMode(newMode) }
             phone.onHUDVoiceCommand = { spoken in routeVoiceHUDCommand(spoken,wakeAlreadyVerified:true) }
             accessory.onAccessoryPacket = { data in handsFree.input(data) }
-            handsFree.enableMediaButtons()
+            if mediaButtonsForHUD { handsFree.enableMediaButtons() }
             accessory.refresh()
             phone.refreshSensors()
             requestHeartRate()
@@ -136,8 +151,16 @@ struct JarvisHUDHome: View {
         }
         .onOpenURL { url in acceptIncomingMessageURL(url) }
         .onChange(of:keepJarvisListening) { _, enabled in
-            if enabled { phone.startListening() }
+            if enabled && !hudQuitRequested { phone.startListening() }
             else { phone.stopListening() }
+        }
+        .onChange(of:mediaButtonsForHUD) { _, enabled in
+            if enabled { handsFree.enableMediaButtons() }
+            else { handsFree.stop() }
+        }
+        .onChange(of:listenWhileMusic) { _, enabled in
+            if enabled && keepJarvisListening { phone.startListening() }
+            else if !enabled && musicOnHUD { phone.setMusicPlaybackActive(true) }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("SolosJarvisIncomingMessage"))) { _ in
             consumeShortcutMessage()
@@ -150,6 +173,7 @@ struct JarvisHUDHome: View {
         }
         .onDisappear {
             phone.onHUDVoiceCommand = nil
+            handsFree.stop()
             captionFlushWork?.cancel()
             translationDebounceWork?.cancel()
             captions.stop()
@@ -159,7 +183,7 @@ struct JarvisHUDHome: View {
         }
         .onChange(of: captions.partial) { _, text in
             guard mode == 2 || mode == 3, !text.isEmpty else { return }
-            if routeVoiceHUDCommand(text,allowMusic:false) { return }
+            if routeVoiceHUDCommand(text,allowMusic:false,allowSystem:false) { return }
             heard = text
             if mode == 2 {
                 // The first partial is quick; a trailing frame MUST still
@@ -201,8 +225,15 @@ struct JarvisHUDHome: View {
                 answer = status
                 if mode == 5 { drawHUD() }
             }
+            let failed = ["didn't start","No saved copy","Couldn't play",
+                          "Music library access unavailable","Allow Media",
+                          "No matching song","catalog playback isn't enabled"]
+            if failed.contains(where:status.contains) {
+                phone.setMusicPlaybackActive(false)
+            }
         }
         .onReceive(ticker) { now in
+            if hudSleeping { return }
             if mode == 0 { drawHUD(throttled:true) }
             if mode == 4 && messagePages.count > 1 && now.timeIntervalSince(lastMessagePageAt) >= 7 {
                 currentMessagePage = (currentMessagePage + 1) % messagePages.count
@@ -506,6 +537,14 @@ struct JarvisHUDHome: View {
             SecureField("Serper Google Search API key (optional)",text:$serperKey).textFieldStyle(.roundedBorder)
             Toggle("Speak Jarvis answers",isOn:$speakReplies)
             Toggle("Listen for Hey Jarvis when possible",isOn:$keepJarvisListening)
+            Toggle("Keep Jarvis microphone active during music (may disrupt playback)",
+                   isOn:$listenWhileMusic)
+            Toggle("Use Bluetooth headset track controls for HUD navigation (interferes with music)",
+                   isOn:$mediaButtonsForHUD)
+            Text("Default: headset Play/Pause/Skip are left to Apple Music. During songs, Jarvis stops its mic to avoid interruptions. For Hey Jarvis while music plays, enable the simultaneous microphone option only if your audio route supports it.")
+                .font(.caption2).foregroundStyle(.secondary)
+            Text("Voice: stop, quit, power off, shut down, sleep, wake up, stop everything, stop navigation, stop captions, stop translation, stop music, cancel timer, stop listening.")
+                .font(.caption2).foregroundStyle(.secondary)
             Text("Keeps the microphone active when iOS permits. iOS may pause speech in the background, and a force-close stops it. Siri Shortcuts remains the lock-screen fallback.")
                 .font(.caption2).foregroundStyle(.secondary)
             Toggle("Allow online speech recognition",isOn:$allowOnlineRecognition)
@@ -528,6 +567,11 @@ struct JarvisHUDHome: View {
 
     private func selectMode(_ value:Int) {
         guard (0..<7).contains(value) else { return }
+        if hudSleeping {
+            hudSleeping = false
+            hudQuitRequested = false
+            lifecycleStatus = "Display restored"
+        }
         if mode == 4 && value != 4 {
             UserDefaults.standard.set(false, forKey:"jarvisMessagePinned")
         }
@@ -609,7 +653,13 @@ struct JarvisHUDHome: View {
     @discardableResult
     private func routeVoiceHUDCommand(_ speech:String,
                                       wakeAlreadyVerified:Bool = false,
-                                      allowMusic:Bool = true) -> Bool {
+                                      allowMusic:Bool = true,
+                                      allowSystem:Bool = true) -> Bool {
+        if allowSystem, let action = JarvisSystemVoice.parse(
+            speech,wakeAlreadyVerified:wakeAlreadyVerified) {
+            handleSystemCommand(action)
+            return true
+        }
         if allowMusic, let command = JarvisMusicCommand.parse(
             speech,wakeAlreadyVerified:wakeAlreadyVerified) {
             handleMusicCommand(command)
@@ -640,20 +690,198 @@ struct JarvisHUDHome: View {
         return true
     }
 
+    private func pauseCaptionsAndTranslation() {
+        captionFlushWork?.cancel()
+        translationDebounceWork?.cancel()
+        captions.stop()
+        translationContinuation?.finish()
+        translationContinuation = nil
+        translationConfiguration = nil
+        translationSessionReady = false
+        phone.setHUDCaptionsActive(false)
+        if mode == 2 { heard = "CAPTIONS STOPPED" }
+        if mode == 3 {
+            translated = "TRANSLATION STOPPED"
+            translationStatus = "Translation paused"
+        }
+    }
+
+    private func pauseAllFeatures(cancelTimer:Bool) {
+        pauseCaptionsAndTranslation()
+        navigation.stop()
+        music.pause()
+        phone.setMusicPlaybackActive(false)
+        accessory.interruptSpeech()
+        if cancelTimer {
+            timerEnd = nil
+            timerStatus = "Timer canceled by voice"
+        }
+    }
+
+    private func sleepJarvis(quit:Bool) {
+        pauseAllFeatures(cancelTimer:false)
+        hudSleeping = true
+        hudQuitRequested = quit
+        musicOnHUD = false
+        if quit {
+            keepJarvisListening = false
+            phone.stopListening()
+            lifecycleStatus = "Jarvis idle. Microphone off. Tap Wake to restore."
+            lastVoiceHUDCommand = "JARVIS EXITED • SOFTWARE IDLE"
+        } else {
+            lifecycleStatus = "Display blanked. Say Hey Jarvis wake up if the microphone is active."
+            lastVoiceHUDCommand = "JARVIS STANDBY • HUD OFF"
+        }
+        renderBlackHUD()
+    }
+
+    private func wakeJarvis() {
+        hudSleeping = false
+        hudQuitRequested = false
+        lifecycleStatus = "Jarvis awake"
+        lastVoiceHUDCommand = "JARVIS ONLINE • HUD RESTORED"
+        handsFree.setMode(0,force:true)
+        if keepJarvisListening { phone.startListening() }
+        drawHUD()
+    }
+
+    private func renderBlackHUD() {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let black = UIGraphicsImageRenderer(
+            size:CGSize(width:428,height:240),format:format).image { _ in
+                UIColor.black.setFill()
+                UIRectFill(CGRect(x:0,y:0,width:428,height:240))
+            }
+        image = black
+        if !accessory.connectedProtocol.isEmpty {
+            accessory.sendHUDImage(black,priority:true)
+        }
+    }
+
+    private func setCommandStatus(_ status:String) {
+        lastVoiceHUDCommand = "VOICE • " + status
+        lifecycleStatus = status
+        if !hudSleeping { drawHUD() }
+    }
+
+    private func handleSystemCommand(_ action:JarvisSystemCommand) {
+        switch action {
+        case .sleepDisplay:
+            sleepJarvis(quit:false)
+        case .quitJarvis:
+            sleepJarvis(quit:true)
+        case .wakeDisplay:
+            wakeJarvis()
+        case .stopAll:
+            pauseAllFeatures(cancelTimer:true)
+            phone.stopListening()
+            keepJarvisListening = false
+            if hudSleeping { wakeJarvis() }
+            else { handsFree.setMode(0,force:true) }
+            setCommandStatus("ALL JARVIS ACTIVITIES STOPPED")
+        case .stopListening:
+            if mode == 2 || mode == 3 { pauseCaptionsAndTranslation() }
+            keepJarvisListening = false
+            phone.stopListening()
+            setCommandStatus("MIC OFF • TAP LISTEN TO RESTART")
+        case .startListening:
+            if hudSleeping { wakeJarvis() }
+            keepJarvisListening = true
+            if mode == 2 || mode == 3 {
+                phone.setHUDCaptionsActive(true)
+                startCaptioning()
+            } else {
+                phone.startListening()
+            }
+            setCommandStatus("MICROPHONE LISTENING WHEN iOS PERMITS")
+        case .stopTalking:
+            accessory.interruptSpeech()
+            setCommandStatus("JARVIS VOICE STOPPED")
+        case .stopMusic:
+            music.pause()
+            phone.setMusicPlaybackActive(false)
+            setCommandStatus("APPLE MUSIC PAUSED")
+        case .stopNavigation:
+            navigation.stop()
+            setCommandStatus("NAVIGATION STOPPED")
+        case .stopCaptions:
+            if mode == 2 { pauseCaptionsAndTranslation() }
+            setCommandStatus("CAPTIONS STOPPED")
+        case .stopTranslation:
+            if mode == 3 { pauseCaptionsAndTranslation() }
+            setCommandStatus("TRANSLATION STOPPED")
+        case .cancelTimer:
+            timerEnd = nil
+            timerStatus = "Timer canceled by voice"
+            setCommandStatus("TIMER CANCELED")
+        case .stopCurrent:
+            if hudSleeping {
+                setCommandStatus("HUD ALREADY IN STANDBY")
+            } else {
+                switch mode {
+                case 1:
+                    navigation.stop()
+                    setCommandStatus("NAVIGATION STOPPED")
+                case 2,3:
+                    pauseCaptionsAndTranslation()
+                    setCommandStatus(mode == 2 ? "CAPTIONS STOPPED" : "TRANSLATION STOPPED")
+                case 5:
+                    if musicOnHUD {
+                        music.pause()
+                        phone.setMusicPlaybackActive(false)
+                        setCommandStatus("MUSIC PAUSED")
+                    } else {
+                        accessory.interruptSpeech()
+                        setCommandStatus("JARVIS SPEECH STOPPED")
+                    }
+                case 6:
+                    timerEnd = nil
+                    timerStatus = "Timer canceled by voice"
+                    setCommandStatus("TIMER CANCELED")
+                case 4:
+                    UserDefaults.standard.set(false,forKey:"jarvisMessagePinned")
+                    handsFree.setMode(0,force:true)
+                    setCommandStatus("PINNED MESSAGE CLEARED")
+                default:
+                    if musicOnHUD {
+                        music.pause()
+                        phone.setMusicPlaybackActive(false)
+                    }
+                    accessory.interruptSpeech()
+                    setCommandStatus("JARVIS STOPPED")
+                }
+            }
+        case .unsupportedPhonePower:
+            if hudSleeping { wakeJarvis() }
+            handsFree.setMode(5,force:true)
+            musicOnHUD = false
+            answer = "iOS does not allow an app to power off an iPhone. Say Hey Jarvis power off to blank your HUD instead."
+            setCommandStatus("IPHONE POWER OFF NOT AVAILABLE")
+        }
+    }
+
     private func handleMusicCommand(_ command:JarvisMusicCommand) {
         musicOnHUD = true
         if mode != 5 { handsFree.setMode(5,force:true) }
         switch command {
         case .play(let query):
             musicQuery = query
+            phone.setMusicPlaybackActive(true)
+            if !listenWhileMusic { captions.stop() }
             music.playSong(query)
         case .pause:
             music.pause()
+            phone.setMusicPlaybackActive(false)
         case .resume:
+            phone.setMusicPlaybackActive(true)
             music.resume()
         case .next:
+            phone.setMusicPlaybackActive(true)
             music.next()
         case .previous:
+            phone.setMusicPlaybackActive(true)
             music.previous()
         }
         answer = music.status
@@ -662,6 +890,7 @@ struct JarvisHUDHome: View {
     }
 
     private func drawHUD(throttled:Bool = false) {
+        if hudSleeping { return }
         if throttled && Date().timeIntervalSince(lastFrameAt) < (mode == 2 ? 0.25 : 0.6) { return }
         lastFrameAt = Date()
         let detail = mode == 0 ? "HEART " + heartRate + " BPM" :

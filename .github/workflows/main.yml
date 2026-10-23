@@ -56,6 +56,12 @@ jobs:
           xcrun swiftc -parse-as-library Sources/JarvisSongCatalog.swift Tests/JarvisSongCatalogSmoke.swift -o /tmp/jarvis-catalog-tests
           /tmp/jarvis-catalog-tests
 
+      - name: Verify Jarvis stop, quit, standby and wake voice commands
+        working-directory: SolosDirectiOS
+        run: |
+          xcrun swiftc -parse-as-library Sources/JarvisSystemCommands.swift Tests/JarvisSystemCommandSmoke.swift -o /tmp/jarvis-system-tests
+          /tmp/jarvis-system-tests
+
       - name: Build iPhone app (unsigned)
         working-directory: SolosDirectiOS
         run: |

@@ -41,6 +41,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var heardWake = false
     private var lastQuestion = ""
     private var continuousWakeWanted = false
+    private var musicPlaybackActive = false
     private var hudCaptionsActive = false
     private var awaitingSpeechCompletion = false
     private var recognitionGeneration = 0
@@ -535,10 +536,23 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
 
     private func resumeWakeIfNeeded() {
+        guard !musicPlaybackActive || UserDefaults.standard.bool(forKey:"jarvisListenWhileMusic") else {
+            return
+        }
         guard continuousWakeWanted, !listening, !startingRecognition, !asking else { return }
         guard !awaitingSpeechCompletion ||
               UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") else { return }
         startListening()
+    }
+
+    func setMusicPlaybackActive(_ active:Bool) {
+        musicPlaybackActive = active
+        if active && !UserDefaults.standard.bool(forKey:"jarvisListenWhileMusic") {
+            stopListening()
+            voiceStatus = "Music playback protected — microphone paused to prevent Apple Music interruption"
+        } else if !active && UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
+            resumeWakeIfNeeded()
+        }
     }
 
     func setHUDCaptionsActive(_ active: Bool) {
@@ -553,6 +567,10 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
 
     func resumeAfterScreenUnlock() {
         guard !hudCaptionsActive else { return }
+        guard !musicPlaybackActive || UserDefaults.standard.bool(forKey:"jarvisListenWhileMusic") else {
+            voiceStatus = "Music playing — Jarvis microphone remains paused"
+            return
+        }
         if UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
             continuousWakeWanted = true
             if !listening || !audioEngine.isRunning {
@@ -562,6 +580,10 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
 
     func startListening() {
+        guard !musicPlaybackActive || UserDefaults.standard.bool(forKey:"jarvisListenWhileMusic") else {
+            voiceStatus = "Music playing — toggle simultaneous listening in settings if needed"
+            return
+        }
         guard !hudCaptionsActive else {
             voiceStatus = "Live captions currently own the microphone"
             return
