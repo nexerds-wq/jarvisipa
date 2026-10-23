@@ -37,6 +37,14 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     private var queuedLatestFrame: Data?
     private var nextByte = 0
     private var drainScheduled = false
+    private var reconnectWork: DispatchWorkItem?
+    private var reconnectAttempt = 0
+    private var userDisconnected = false
+    private var lastHUDSendAt = Date.distantPast
+    private var lastHUDPayloadSize = 0
+    private var reconnectObservers = [NSObjectProtocol]()
+    private var preferredAccessoryName = UserDefaults.standard.string(forKey:"jarvisPreferredAccessoryName") ?? ""
+    private var preferredProtocol = UserDefaults.standard.string(forKey:"jarvisPreferredAccessoryProtocol") ?? ""
     // CPU-heavy RGB565 RLE compression must never stall microphone, SwiftUI
     // or text callbacks on the iPhone main run loop.
     private let imageEncoderQueue = DispatchQueue(label:"solos.fast.hud.encoder",qos:.userInitiated)
@@ -51,6 +59,15 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         super.init()
         speaker.delegate = self
         refresh()
+        let center = NotificationCenter.default
+        for name in [Notification.Name.EAAccessoryDidConnect, Notification.Name.EAAccessoryDidDisconnect] {
+            reconnectObservers.append(center.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
+                self?.refresh()
+                self?.scheduleReconnect()
+            })
+        }
+        accessoryManager.registerForLocalNotifications()
+        scheduleReconnect()
     }
 
     var audioRoute: String {
@@ -71,14 +88,16 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             )
         }
         if session == nil {
-            status = found.isEmpty
-                ? "No MFi Bluetooth accessory exposed to this app. Pair Solos in iPhone Settings, then check again."
-                : "Found \(found.count) Apple External Accessory device(s). Check its protocols below."
+            scheduleReconnect()
+            if found.isEmpty { status = "Waiting for compatible glasses • auto reconnect enabled" }
         }
     }
 
     func connect(accessoryID: Int, protocolString: String) {
-        disconnect()
+        userDisconnected = false
+        closeStreams()
+        reconnectWork?.cancel()
+        reconnectWork = nil
         guard let accessory = accessoryManager.connectedAccessories.first(where: { $0.connectionID == accessoryID }) else {
             status = "Accessory is no longer connected. Refresh and try again."
             return
@@ -97,6 +116,11 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             status = "iOS refused the accessory session. This protocol might be restricted to the official app."
             return
         }
+        preferredAccessoryName = accessory.name
+        preferredProtocol = protocolString
+        UserDefaults.standard.set(accessory.name,forKey:"jarvisPreferredAccessoryName")
+        UserDefaults.standard.set(protocolString,forKey:"jarvisPreferredAccessoryProtocol")
+        reconnectAttempt = 0
         session = newSession
         inputStream = input
         outputStream = output
@@ -112,6 +136,13 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     }
 
     func disconnect() {
+        userDisconnected = true
+        reconnectWork?.cancel()
+        reconnectWork = nil
+        closeStreams()
+    }
+
+    private func closeStreams() {
         inputStream?.close()
         outputStream?.close()
         if let inputStream { inputStream.remove(from: .main, forMode: .common) }
@@ -129,6 +160,39 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         queuedLatestFrame = nil
         nextByte = 0
         drainScheduled = false
+    }
+
+    private func scheduleReconnect() {
+        guard !userDisconnected, session == nil, reconnectWork == nil else { return }
+        let delay = min(30.0, Double(1 << min(reconnectAttempt,5)))
+        let job = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.reconnectWork = nil
+            guard !self.userDisconnected, self.session == nil else { return }
+            let found = self.accessoryManager.connectedAccessories
+            let match = found.first {
+                !self.preferredProtocol.isEmpty &&
+                $0.protocolStrings.contains(self.preferredProtocol) &&
+                (self.preferredAccessoryName.isEmpty || $0.name == self.preferredAccessoryName)
+            } ?? found.first {
+                $0.protocolStrings.contains(where:self.declaredProtocols.contains)
+            }
+            if let match, let proto = match.protocolStrings.first(where:self.declaredProtocols.contains) {
+                self.connect(accessoryID:match.connectionID,protocolString:proto)
+            } else {
+                self.reconnectAttempt = min(5,self.reconnectAttempt+1)
+                self.scheduleReconnect()
+            }
+        }
+        reconnectWork = job
+        DispatchQueue.main.asyncAfter(deadline:.now()+delay,execute:job)
+    }
+
+    private func lostConnection(_ reason:String) {
+        closeStreams()
+        status = reason + " • reconnecting automatically"
+        reconnectAttempt = min(5,reconnectAttempt+1)
+        scheduleReconnect()
     }
 
     func openPicker() {
@@ -157,6 +221,10 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             status = "NO GLASSES HUD CONNECTION. Connect an exposed Solos ExternalAccessory session."
             return
         }
+        // Limit costly full-frame compression and writes; keep only the newest
+        // image rather than overwhelming a slow Classic Bluetooth stream.
+        guard Date().timeIntervalSince(lastHUDSendAt) >= (priority ? 0.18 : 0.75) else { return }
+        lastHUDSendAt = Date()
         latestHUDRequestID += 1
         let requestID = latestHUDRequestID
         // Serial worker keeps peak memory bounded. Only the latest fully
@@ -168,6 +236,10 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
                       self.session != nil else { return }
                 guard let packet else {
                     self.status = "Could not encode OLED image."
+                    return
+                }
+                guard packet.count <= 180_000 else {
+                    self.status = "HUD image too large; skipped to protect Bluetooth"
                     return
                 }
                 self.enqueuePacket(packet,priority:priority)
@@ -284,10 +356,10 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             }
         case .errorOccurred:
             status = "Bluetooth accessory stream error: \(aStream.streamError?.localizedDescription ?? "unknown")"
-            disconnect()
+            lostConnection("Bluetooth stream error")
         case .endEncountered:
             status = "Bluetooth accessory session ended."
-            disconnect()
+            lostConnection("Bluetooth session ended")
         default:
             break
         }
@@ -320,6 +392,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             }
             if written < 0 {
                 status = "Failed sending display packet: \(outputStream.streamError?.localizedDescription ?? "unknown")"
+                lostConnection("HUD write failed")
                 return
             }
             if written == 0 { break }
