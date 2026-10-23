@@ -16,6 +16,10 @@ struct JarvisHUDHome: View {
     @StateObject private var navigation = SolosNavigationEngine()
     @StateObject private var music = JarvisAppleMusic()
     @StateObject private var weatherGuardian = JarvisWeatherGuardian()
+    @StateObject private var smartTasks = JarvisSmartTasks()
+    @State private var smartTaskTitle = ""
+    @State private var smartTaskMinutes = 10
+    @State private var smartTaskKind = "reminder"
     private let health = HKHealthStore()
 
     @State private var mode = 0
@@ -299,7 +303,7 @@ struct JarvisHUDHome: View {
         .onChange(of:companionSoundCues) { _,_ in syncEmotionCues() }
         .onReceive(ticker) { now in
             if hudSleeping { return }
-            if mode == 0 { drawHUD(throttled:true) }
+            if mode == 0 || !smartTasks.pinned.isEmpty { drawHUD(throttled:true) }
             if mode == 4 && messagePages.count > 1 && now.timeIntervalSince(lastMessagePageAt) >= 7 {
                 currentMessagePage = (currentMessagePage + 1) % messagePages.count
                 lastMessagePageAt = now
@@ -740,6 +744,34 @@ struct JarvisHUDHome: View {
     private var companionPanel: some View {
         section("JARVIS COMPANION • SECOND OLLAMA PERSONA") {
             Toggle("Enable emotional companion",isOn:$companionEnabled)
+            VStack(alignment:.leading,spacing:8) {
+                Text("PINNED SMART TASKS").font(.headline)
+                TextField("Task title",text:$smartTaskTitle).textFieldStyle(.roundedBorder)
+                Picker("Type",selection:$smartTaskKind) {
+                    Text("Reminder").tag("reminder")
+                    Text("Alarm").tag("alarm")
+                    Text("Timer").tag("timer")
+                }.pickerStyle(.segmented)
+                Stepper("After \\(smartTaskMinutes) minutes",value:$smartTaskMinutes,in:1...1440)
+                Button("CREATE & PIN ON HUD") {
+                    let title = smartTaskTitle.trimmingCharacters(in:.whitespacesAndNewlines)
+                    smartTasks.add(title:title.isEmpty ? smartTaskKind.capitalized : title,
+                                   kind:smartTaskKind,after:TimeInterval(smartTaskMinutes * 60))
+                    smartTaskTitle = ""
+                    drawHUD()
+                }.buttonStyle(.borderedProminent)
+                ForEach(smartTasks.pinned.prefix(4)) { item in
+                    HStack {
+                        Text(item.kind.uppercased() + " • " + item.title)
+                            .font(.caption).lineLimit(1)
+                        Spacer()
+                        Button("DONE") { smartTasks.complete(item.id); drawHUD() }
+                            .font(.caption2)
+                        Button("X") { smartTasks.remove(item.id); drawHUD() }
+                            .font(.caption2)
+                    }
+                }
+            }
             Toggle("Offer support when speech suggests distress",isOn:$companionAutoSupport)
                 .disabled(!companionEnabled)
             Toggle("Speak companion replies aloud",isOn:$companionSpeak)
@@ -857,6 +889,24 @@ struct JarvisHUDHome: View {
         companionLastTranscript = phrase
         talkToCompanion("I said: " + String(phrase.prefix(350)) +
                         ". Offer one brief, gentle, non-assumptive response.")
+    }
+
+    private func smartTasksOverlay(_ original:UIImage) -> UIImage {
+        guard let task = smartTasks.pinned.first else { return original }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size:CGSize(width:428,height:240),format:format).image { ctx in
+            original.draw(in:CGRect(x:0,y:0,width:428,height:240))
+            UIColor(red:0.02,green:0.10,blue:0.18,alpha:0.98).setFill()
+            ctx.fill(CGRect(x:6,y:190,width:416,height:46))
+            let remaining = max(0,Int(task.due.timeIntervalSinceNow))
+            let countdown = remaining >= 3600 ? "\\(remaining / 3600)h \\((remaining % 3600) / 60)m" :
+                remaining >= 60 ? "\\(remaining / 60)m \\(remaining % 60)s" : "\\(remaining)s"
+            let label = task.kind.uppercased() + " • " + task.title + " • " + countdown
+            (label as NSString).draw(in:CGRect(x:12,y:198,width:404,height:34),
+                withAttributes:[.font:UIFont.systemFont(ofSize:17,weight:.bold),
+                                .foregroundColor:UIColor.white])
+        }
     }
 
     private func companionOverlay(_ original:UIImage) -> UIImage {
@@ -1044,6 +1094,12 @@ struct JarvisHUDHome: View {
                                       wakeAlreadyVerified:Bool = false,
                                       allowMusic:Bool = true,
                                       allowSystem:Bool = true) -> Bool {
+        if let (kind,title,seconds) = JarvisSmartTasks.parse(speech) {
+            smartTasks.add(title:title,kind:kind,after:seconds)
+            lastVoiceHUDCommand = "PINNED " + kind.uppercased()
+            drawHUD()
+            return true
+        }
         if allowSystem, let action = JarvisSystemVoice.parse(
             speech,wakeAlreadyVerified:wakeAlreadyVerified) {
             handleSystemCommand(action)
@@ -1335,7 +1391,8 @@ struct JarvisHUDHome: View {
             senderPhoto:senderPhoto,messagePage:currentMessagePage + 1,pageCount:messagePages.count)
         let companionFrame = companionEnabled && Date().timeIntervalSince(companionLastResponse) < 35 &&
             companionStatus == "Companion replied" ? companionOverlay(output) : output
-        let tuned = weatherGuardian.overlay(JarvisHUDVision.apply(to:companionFrame))
+        let taskFrame = smartTasksOverlay(companionFrame)
+        let tuned = weatherGuardian.overlay(JarvisHUDVision.apply(to:taskFrame))
         image = tuned
         // sendHUDImage drops obsolete ordinary frames while busy. No new BLE
         // transport is fabricated if iOS does not expose an accessory session.
