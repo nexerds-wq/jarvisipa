@@ -292,7 +292,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             defer {
                 self.asking = false
                 if self.continuousWakeWanted && !self.awaitingSpeechCompletion {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                         guard let self, self.continuousWakeWanted, !self.listening else { return }
                         self.startListening()
                     }
@@ -325,37 +325,28 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     let systemInstructions = "Answer clearly in one or two short sentences. " +
                         JarvisLiveClock.modelTimeContext()
                     do {
-                        let session = LanguageModelSession(instructions: systemInstructions)
-                        response = try await session.respond(to: prompt).content
-                    } catch let firstError {
-                        self.aiStatus = "Apple AI generation failed; checking a fresh session..."
-                        do {
-                            let retry = LanguageModelSession(instructions: systemInstructions)
-                            response = try await retry.respond(to: prompt).content
-                        } catch let secondError {
-                            if UserDefaults.standard.bool(forKey: "jarvisWikipediaFallback") {
-                                // Explicit opt-in only. Wikipedia receives the factual
-                                // question over HTTPS, not the user's other app data.
-                                do {
-                                    response = try await Self.wikipediaAnswer(for: prompt)
-                                    answeredOnline = true
-                                } catch let wikipediaError {
-                                    throw NSError(domain:"SolosJarvis.AI",code:2,userInfo:[
-                                        NSLocalizedDescriptionKey:
-                                            "Apple AI: " + Self.describeModelFailure(secondError)
-                                            + " (first attempt: " + Self.describeModelFailure(firstError)
-                                            + "). Wikipedia lookup also failed: "
-                                            + wikipediaError.localizedDescription
-                                    ])
-                                }
-                            } else {
-                                throw NSError(domain:"SolosJarvis.AI",code:1,userInfo:[
+                        // Stream partial tokens immediately; skip the second
+                        // identical model retry which doubles failure latency.
+                        response = try await self.fastOnDeviceAnswer(
+                            prompt:prompt,instructions:systemInstructions)
+                    } catch let modelError {
+                        if UserDefaults.standard.bool(forKey:"jarvisWikipediaFallback") {
+                            do {
+                                response = try await Self.wikipediaAnswer(for:prompt)
+                                answeredOnline = true
+                            } catch let wikipediaError {
+                                throw NSError(domain:"SolosJarvis.AI",code:2,userInfo:[
                                     NSLocalizedDescriptionKey:
-                                        "Apple AI: " + Self.describeModelFailure(secondError)
-                                        + " (first attempt: " + Self.describeModelFailure(firstError)
-                                        + "). You can enable Wikipedia factual lookup as an optional online fallback."
+                                        "Apple AI: " + Self.describeModelFailure(modelError)
+                                        + ". Factual lookup: " + wikipediaError.localizedDescription
                                 ])
                             }
+                        } else {
+                            throw NSError(domain:"SolosJarvis.AI",code:1,userInfo:[
+                                NSLocalizedDescriptionKey:
+                                    "Apple AI: " + Self.describeModelFailure(modelError)
+                                    + ". The slow redundant second model pass was skipped."
+                            ])
                         }
                     }
                     guard !response.isEmpty else {
@@ -373,6 +364,31 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             }
         }
     }
+    @MainActor
+    private func fastOnDeviceAnswer(prompt:String,instructions:String) async throws -> String {
+        let session = LanguageModelSession(instructions:instructions)
+        // Apple recommends non-streaming responses in the background.
+        // In foreground, deliver early token snapshots on the phone; send
+        // to HUD and speak only after the complete reply is available.
+        if UIApplication.shared.applicationState != .active {
+            return try await session.respond(to:prompt).content
+        }
+        var answer = ""
+        var lastUIUpdate = Date.distantPast
+        let snapshots = session.streamResponse(to:prompt)
+        for try await snapshot in snapshots {
+            let content = snapshot.content
+            guard !content.isEmpty else { continue }
+            answer = content
+            if Date().timeIntervalSince(lastUIUpdate) >= 0.16 {
+                lastUIUpdate = Date()
+                aiAnswer = content
+                aiStatus = "JARVIS responding live..."
+            }
+        }
+        return answer
+    }
+
     // Shared for local clock, Apple AI and online factual answers.
     // All response paths use the same spoken audio and real glasses HUD
     // publication events, and preserve continuous microphone auto-rearm.
@@ -412,7 +428,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             // instead of relying on AVSpeechSynthesizer.didFinish.
             // iOS voiceChat handles acoustic echo cancellation
             // on supported audio routes.
-            self.scheduleWakeRearm(after:0.9)
+            self.scheduleWakeRearm(after:0.4)
         }
     }
     }
@@ -688,7 +704,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
     // Do not decide a question is complete by character count. Every new
     // transcription cancels the previous silence timer. A natural pause of
-    // 1.8 seconds (or Apple's final recognition result) submits the question.
+    // 0.75 seconds (or Apple's final recognition result) submits the question.
     private func scheduleQuestionAfterSilence(generation:Int) {
         questionSilenceWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -696,7 +712,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             self.submitPendingVoiceQuestion(generation:generation)
         }
         questionSilenceWork = work
-        DispatchQueue.main.asyncAfter(deadline:.now()+1.8,execute:work)
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.75,execute:work)
         voiceStatus = "Listening to your full question — pause when done"
     }
 
@@ -722,7 +738,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         stopListening()
         continuousWakeWanted = rearm
         restartScheduled = true
-        DispatchQueue.main.asyncAfter(deadline:.now()+0.9) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.4) { [weak self] in
             guard let self else { return }
             self.restartScheduled = false
             guard self.continuousWakeWanted, !self.listening else { return }
