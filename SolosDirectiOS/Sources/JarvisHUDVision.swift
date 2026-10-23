@@ -20,6 +20,9 @@ enum JarvisHUDVision {
         CGFloat(max(0.85,min(1.55,settings.object(forKey:"hudVisionTextScale") as? Double ?? 1.12)))
     }
     static var thickText: Bool { settings.object(forKey:"hudVisionBold") as? Bool ?? true }
+    static var directionalCorrection: Int {
+        max(0,min(3,settings.integer(forKey:"hudVisionDirectional")))
+    }
     static var highVisibility: Bool { settings.bool(forKey:"hudVisionHighVisibility") }
 
     static var foreground: UIColor { UIColor.white }
@@ -47,6 +50,23 @@ enum JarvisHUDVision {
             sharp?.setValue(result,forKey:kCIInputImageKey)
             sharp?.setValue(sharpening,forKey:kCIInputSharpnessKey)
             result = sharp?.outputImage ?? result
+        }
+        if directionalCorrection > 0 {
+            // Experimental directional unsharp mask. Distinct X/Y kernels
+            // may improve perceived stroke separation; NOT a refractive correction.
+            let strength: CGFloat = directionalCorrection == 3 ? 0.45 : 0.25
+            let x: CGFloat = directionalCorrection == 2 ? 0 : strength
+            let y: CGFloat = directionalCorrection == 1 ? 0 : strength
+            let kernel = CIVector(values:[
+                0,-y,0,
+                -x,1+2*x+2*y,-x,
+                0,-y,0
+            ],count:9)
+            let filter = CIFilter(name:"CIConvolution3X3")
+            filter?.setValue(result,forKey:kCIInputImageKey)
+            filter?.setValue(kernel,forKey:"inputWeights")
+            filter?.setValue(0,forKey:"inputBias")
+            result = filter?.outputImage ?? result
         }
         let ctx = CIContext(options:[.useSoftwareRenderer:false])
         guard let cg = ctx.createCGImage(result.cropped(to:extent),from:extent) else {

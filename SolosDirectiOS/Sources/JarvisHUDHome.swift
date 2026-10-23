@@ -70,6 +70,11 @@ struct JarvisHUDHome: View {
     @AppStorage("hudVisionTextScale") private var hudTextScale = 1.12
     @AppStorage("hudVisionBold") private var hudBold = true
     @AppStorage("hudVisionHighVisibility") private var hudHighVisibility = false
+    @AppStorage("hudVisionDirectional") private var hudDirectional = 0
+    @State private var visionCalibrationActive = false
+    @State private var visionCalibrationStep = 0
+    @State private var visionCalibrationChoice = 0
+    @State private var visionCalibrationNote = "Choose the clearest pattern while looking through the glasses."
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
     @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
     @State private var speakReplies = true
@@ -127,7 +132,7 @@ struct JarvisHUDHome: View {
                     }
                     connectionSummary
                     if showConnection { connectionPanel }
-                    if showSettings { visionPanel; settingsPanel }
+                    if showSettings { visionPanel; visionCalibrationPanel; settingsPanel }
                     Text("Actual glasses display needs an iOS-authorized accessory data connection. Pairing Bluetooth audio alone does not give this app OLED access.")
                         .font(.caption2).foregroundStyle(.orange)
                 }
@@ -587,6 +592,71 @@ struct JarvisHUDHome: View {
         .onChange(of:hudHighVisibility) { _,_ in drawHUD() }
     }
 
+    private var visionCalibrationPanel: some View {
+        section("VISION CALIBRATION • THROUGH THE GLASSES") {
+            Text("Compare patterns on the actual lens. Tap the clearest option. Use your prescription lenses if you normally wear them.")
+                .font(.caption2).foregroundStyle(.secondary)
+            Toggle("Show calibration chart on HUD",isOn:$visionCalibrationActive)
+                .onChange(of:visionCalibrationActive) { _,_ in drawHUD() }
+            if visionCalibrationActive {
+                Text("TEST \(visionCalibrationStep + 1) OF 3")
+                    .font(.headline)
+                Text(visionCalibrationNote).font(.caption)
+                if visionCalibrationStep == 0 {
+                    Text("Which text is easier to read?")
+                    HStack {
+                        Button("WHITE") {
+                            hudHighVisibility = false
+                            visionCalibrationChoice = 0
+                            visionCalibrationStep = 1
+                            drawHUD()
+                        }.buttonStyle(.bordered)
+                        Button("YELLOW") {
+                            hudHighVisibility = true
+                            visionCalibrationChoice = 1
+                            visionCalibrationStep = 1
+                            drawHUD()
+                        }.buttonStyle(.bordered)
+                    }
+                } else if visionCalibrationStep == 1 {
+                    Text("Choose the sharpest-looking letters, without halos.")
+                    HStack {
+                        Button("NORMAL") { hudDirectional = 0; visionCalibrationStep = 2; drawHUD() }
+                        Button("HORIZONTAL") { hudDirectional = 1; visionCalibrationStep = 2; drawHUD() }
+                        Button("VERTICAL") { hudDirectional = 2; visionCalibrationStep = 2; drawHUD() }
+                    }.buttonStyle(.bordered)
+                } else {
+                    Text("Can you comfortably read the entire test line?")
+                    HStack {
+                        Button("BIGGER") {
+                            hudTextScale = min(1.55,hudTextScale + 0.1)
+                            drawHUD()
+                        }.buttonStyle(.bordered)
+                        Button("SAVE") {
+                            visionCalibrationActive = false
+                            visionCalibrationNote = "Calibration saved on this iPhone."
+                            drawHUD()
+                        }.buttonStyle(.borderedProminent)
+                    }
+                }
+                Button("RESTART TEST") {
+                    visionCalibrationStep = 0
+                    visionCalibrationNote = "Choose the clearest pattern while looking through the glasses."
+                    drawHUD()
+                }.font(.caption)
+            }
+            Picker("Directional edge enhancement",selection:$hudDirectional) {
+                Text("Off").tag(0)
+                Text("Horizontal").tag(1)
+                Text("Vertical").tag(2)
+                Text("Both").tag(3)
+            }.pickerStyle(.menu)
+            .onChange(of:hudDirectional) { _,_ in drawHUD() }
+            Text("Directional sharpening is experimental. It does not correct astigmatism, replace glasses, or change lens focus.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
     private var settingsPanel: some View {
         section("AI • PRIVACY • SPEECH") {
             Toggle("Online Ollama (off = iPhone on-device AI)",isOn:$online)
@@ -972,6 +1042,15 @@ struct JarvisHUDHome: View {
             renderMode = 5
         default: text = ""; renderMode = mode
         }
+        if visionCalibrationActive {
+            let sample = makeVisionCalibrationImage()
+            let tuned = JarvisHUDVision.apply(to:sample)
+            image = tuned
+            if !accessory.connectedProtocol.isEmpty {
+                accessory.sendHUDImage(tuned,priority:true)
+            }
+            return
+        }
         let output = SolosProHUD.image(
             mode:renderMode,clock:phone.clock,date:phone.dateLine,
             steps:Int(phone.steps) ?? 0,distance:phone.distance,
@@ -984,6 +1063,34 @@ struct JarvisHUDHome: View {
         // transport is fabricated if iOS does not expose an accessory session.
         if !accessory.connectedProtocol.isEmpty {
             accessory.sendHUDImage(tuned,priority:mode == 4 || mode == 5)
+        }
+    }
+
+    private func makeVisionCalibrationImage() -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size:CGSize(width:428,height:240))
+        return renderer.image { context in
+            UIColor.black.setFill()
+            context.cgContext.fill(CGRect(x:0,y:0,width:428,height:240))
+            let color = hudHighVisibility ? UIColor.yellow : UIColor.white
+            let title = "VISION TEST  \(visionCalibrationStep + 1)/3"
+            (title as NSString).draw(at:CGPoint(x:18,y:12),withAttributes:[
+                .font:UIFont.systemFont(ofSize:17,weight:.black),
+                .foregroundColor:color])
+            let line = visionCalibrationStep == 0 ? "E  F  P  T  O  Z" :
+                       visionCalibrationStep == 1 ? "H  N  K  M  X  A" :
+                       "READ THIS CLEARLY"
+            (line as NSString).draw(in:CGRect(x:14,y:68,width:400,height:62),withAttributes:[
+                .font:UIFont.systemFont(ofSize:visionCalibrationStep == 2 ? 35 : 43,
+                                         weight:.black),
+                .foregroundColor:color])
+            ("I l 1  O 0  8 B  S 5" as NSString).draw(
+                in:CGRect(x:16,y:151,width:396,height:52),withAttributes:[
+                    .font:UIFont.monospacedSystemFont(ofSize:25,weight:.bold),
+                    .foregroundColor:UIColor.white])
+            ("SELECT CLEAREST OPTION ON IPHONE" as NSString).draw(
+                at:CGPoint(x:18,y:217),withAttributes:[
+                    .font:UIFont.systemFont(ofSize:12,weight:.bold),
+                    .foregroundColor:UIColor.lightGray])
         }
     }
 
