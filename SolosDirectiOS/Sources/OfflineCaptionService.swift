@@ -170,10 +170,13 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                 // Bluetooth headset HFP may have low far-field sensitivity.
                 // Use the iPhone's microphones without echo processing for a
                 // person speaking across the room.
-                try audio.setCategory(.record,mode:.measurement,options:[])
+                // A record-only session interrupts Apple Music. Mix with existing playback,
+                // retaining Bluetooth A2DP output while recording with iPhone microphone.
+                try audio.setCategory(.playAndRecord,mode:.default,
+                                      options:[.mixWithOthers,.allowBluetoothA2DP,.defaultToSpeaker])
             } else {
                 try audio.setCategory(.playAndRecord,mode:.default,
-                                      options:[.defaultToSpeaker,.allowBluetooth])
+                                      options:[.mixWithOthers,.allowBluetoothHFP,.allowBluetoothA2DP,.defaultToSpeaker])
             }
             try audio.setActive(true)
             if preferPhoneMicrophone,

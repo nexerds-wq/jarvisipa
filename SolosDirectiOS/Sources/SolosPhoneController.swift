@@ -411,10 +411,10 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             let audio = AVAudioSession.sharedInstance()
             if bargeIn {
                 try audio.setCategory(.playAndRecord, mode:.voiceChat,
-                                      options:[.defaultToSpeaker,.allowBluetooth,.mixWithOthers])
+                                      options:[.mixWithOthers,.allowBluetoothA2DP,.defaultToSpeaker])
             } else {
                 try audio.setCategory(.playback, mode:.spokenAudio,
-                                      options:[.duckOthers,.allowBluetoothA2DP])
+                                      options:[.mixWithOthers,.allowBluetoothA2DP])
             }
             try audio.setActive(true)
             self.voiceStatus = bargeIn ? "Speaking and listening for Hey Jarvis" : "Speaking Jarvis answer"
@@ -638,7 +638,13 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         guard let request = recognitionRequest else { return }
         do {
             let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playAndRecord, mode:.voiceChat, options:[.defaultToSpeaker,.allowBluetooth,.mixWithOthers])
+            try audio.setCategory(.playAndRecord, mode:.default,
+                                       options:[.mixWithOthers,.allowBluetoothA2DP,.defaultToSpeaker])
+            // Prefer the phone microphone so Bluetooth headphones can keep
+            // high-quality A2DP music instead of switching into HFP call audio.
+            if let builtIn = audio.availableInputs?.first(where:{$0.portType == .builtInMic}) {
+                try? audio.setPreferredInput(builtIn)
+            }
             try audio.setActive(true, options: .notifyOthersOnDeactivation)
             let node = audioEngine.inputNode
             let format = node.outputFormat(forBus: 0)

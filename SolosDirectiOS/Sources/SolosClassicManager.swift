@@ -212,8 +212,10 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         speaker.stopSpeaking(at:.immediate)
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord,mode:.default,
-                                    options:[.allowBluetoothHFP,.defaultToSpeaker])
+            // Speech can coexist with music; never force the Bluetooth headset
+            // into HFP/call mode just to play an assistant reply.
+            try session.setCategory(.playback,mode:.default,
+                                    options:[.mixWithOthers,.allowBluetoothA2DP])
             try session.setActive(true)
         } catch {
             status = "Speech audio route unavailable: " + error.localizedDescription

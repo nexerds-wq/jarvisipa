@@ -108,7 +108,7 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
     @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
     @State private var speakReplies = true
-    @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = false
+    @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = true
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let names = ["DASHBOARD","NAVIGATION","CAPTIONS","TRANSLATE","MESSAGES","JARVIS","TIMERS"]
     private let locales: [(String,String)] = [
@@ -981,7 +981,7 @@ struct JarvisHUDHome: View {
                     }
                     companionStatus = "Companion replied"
                     companionBusy = false
-                    if companionSpeak && !musicOnHUD && mode != 3 {
+                    if companionSpeak && mode != 3 {
                         emotionCues.stop()
                         if mode == 2 { captions.stop() }
                         jarvisSpeaking = true
