@@ -510,18 +510,18 @@ struct JarvisHUDHome: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         case 5:
-            section("HEY JARVIS") {
-                TextField("Ask Jarvis...",text:$question,axis:.vertical)
-                    .lineLimit(1...4).textFieldStyle(.roundedBorder)
-                HStack {
-                    Button("Ask") { askJarvis() }.disabled(aiBusy || question.trimmingCharacters(in:.whitespaces).isEmpty)
-                    Button(phone.listening ? "Stop mic" : "Listen") {
-                        if phone.listening { phone.stopListening() } else { phone.startListening() }
-                    }
-                }.buttonStyle(.borderedProminent)
-                Text(aiBusy ? "Thinking..." : answer).font(.body)
-                Text("Mode: " + (online ? "Ollama server" : "Apple on-device model"))
+            section("JARVIS • HUD CHAT") {
+                Text("Talk to the same Jarvis at the top of the app. Its reply appears here and on your glasses when connected.")
                     .font(.caption).foregroundStyle(.secondary)
+                Text(companionBusy ? "Thinking..." : companionReply).font(.body)
+                Button("OPEN VOICE CONVERSATION") {
+                    companionEnabled = true
+                    companionSpeak = true
+                    companionTurnTaking = true
+                    companionQuiet = false
+                    companionConversationUntil = Date().addingTimeInterval(companionFollowUpSeconds)
+                    selectMode(2)
+                }.buttonStyle(.borderedProminent)
             }
             section("APPLE MUSIC • VOICE PLAYBACK") {
                 Text("Say: Hey Jarvis, play Blinding Lights by The Weeknd")
@@ -1502,7 +1502,7 @@ struct JarvisHUDHome: View {
             speed:phone.speed,battery:phone.battery,gps:phone.coordinates,
             message:text,detail:detail,sender:sender,
             senderPhoto:senderPhoto,messagePage:currentMessagePage + 1,pageCount:messagePages.count)
-        let companionFrame = companionEnabled && Date().timeIntervalSince(companionLastResponse) < 35 &&
+        let companionFrame = Date().timeIntervalSince(companionLastResponse) < 35 &&
             companionStatus == "Companion replied" ? companionOverlay(output) : output
         let taskFrame = smartTasksOverlay(companionFrame)
         let tuned = weatherGuardian.overlay(JarvisHUDVision.apply(to:taskFrame))
