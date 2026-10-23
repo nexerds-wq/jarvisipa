@@ -137,7 +137,7 @@ struct JarvisHUDHome: View {
         }
     }
 
-    var body: some View {
+    private var hudWithLifecycle: some View {
         mainLayout
         .preferredColorScheme(.dark)
         .onAppear {
@@ -185,6 +185,10 @@ struct JarvisHUDHome: View {
             translationContinuation = nil
             phone.setHUDCaptionsActive(false)
         }
+    }
+
+    private var hudWithObservedState: some View {
+        hudWithLifecycle
         .onChange(of: captions.partial) { _, text in
             guard mode == 2 || mode == 3, !text.isEmpty else { return }
             if routeVoiceHUDCommand(text,allowMusic:false,allowSystem:false) { return }
@@ -253,6 +257,10 @@ struct JarvisHUDHome: View {
                 drawHUD(throttled:true)
             }
         }
+    }
+
+    var body: some View {
+        hudWithObservedState
         .translationTask(translationConfiguration) { session in
             let channel = AsyncStream<String>.makeStream(bufferingPolicy:.bufferingNewest(1))
             await MainActor.run {
