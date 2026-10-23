@@ -1,72 +1,73 @@
-name: Build Jarvis Glasses IPA
+name: Build Jarvis Solos HUD IPA
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - "JarvisGlasses/**"
-      - "project.yml"
-      - ".github/workflows/main.yml"
+      - 'SolosDirectiOS/**'
+      - '.github/workflows/main.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: jarvis-ipa-${{ github.ref }}
+  group: jarvis-hud-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build iOS IPA
-    runs-on: macos-latest
-    timeout-minutes: 45
-
+  ios:
+    name: Build original Solos HUD iPhone app
+    runs-on: macos-26
+    timeout-minutes: 50
     steps:
-      - name: Check out Jarvis source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          if [ -d /Applications/Xcode_26.3.app/Contents/Developer ]; then
+            sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          fi
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: |
-          brew install xcodegen
-          xcodegen --version
-          xcodebuild -version
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
 
-      - name: Generate Xcode project
-        run: xcodegen generate --spec project.yml
+      - name: Generate Solos HUD Xcode project
+        working-directory: SolosDirectiOS
+        run: xcodegen generate
 
-      - name: Build for iPhone (no code signing)
+      - name: Verify time and date
+        working-directory: SolosDirectiOS
+        run: |
+          xcrun swiftc -parse-as-library Sources/JarvisLiveClock.swift Tests/LiveClockSmoke.swift -o /tmp/solos-clock-test
+          /tmp/solos-clock-test
+
+      - name: Build iPhone app (unsigned)
+        working-directory: SolosDirectiOS
         run: |
           set -o pipefail
-          xcodebuild \
-            -project JarvisGlasses.xcodeproj \
-            -scheme JarvisGlasses \
-            -configuration Release \
-            -sdk iphoneos \
+          xcodebuild -project SolosDirect.xcodeproj -scheme SolosDirect \
+            -configuration Release -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath "$RUNNER_TEMP/jarvis-derived" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
 
-      - name: Package unsigned IPA
+      - name: Package IPA
         run: |
           set -euo pipefail
-          APP="$RUNNER_TEMP/jarvis-derived/Build/Products/Release-iphoneos/JarvisGlasses.app"
-          test -d "$APP"
+          APP=SolosDirectiOS/build/Build/Products/Release-iphoneos/SolosDirect.app
           test -f "$APP/Info.plist"
-          test -f "$APP/JarvisGlasses"
-          plutil -lint "$APP/Info.plist"
-          mkdir -p dist/Payload
-          ditto "$APP" dist/Payload/JarvisGlasses.app
-          (cd dist && ditto -c -k --sequesterRsrc --keepParent Payload JarvisGlasses-unsigned.ipa)
-          unzip -t dist/JarvisGlasses-unsigned.ipa | tail -n 3
+          test -f "$APP/SolosDirect"
+          mkdir -p ipa/Payload
+          ditto "$APP" ipa/Payload/SolosDirect.app
+          (cd ipa && zip -qry ../Jarvis-Solos-HUD-V25-unsigned.ipa Payload)
+          unzip -t Jarvis-Solos-HUD-V25-unsigned.ipa >/dev/null
 
-      - name: Upload IPA for download
+      - name: Upload downloadable IPA
         uses: actions/upload-artifact@v4
         with:
-          name: JarvisGlasses-unsigned-IPA
-          path: dist/JarvisGlasses-unsigned.ipa
-          if-no-files-found: error
+          name: Jarvis-Solos-HUD-V25-unsigned-IPA
+          path: Jarvis-Solos-HUD-V25-unsigned.ipa
           retention-days: 14
+          if-no-files-found: error

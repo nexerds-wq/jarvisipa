@@ -1,83 +1,22 @@
-# Jarvis Glasses V2 — Background “Hey Jarvis”
+# Jarvis Solos HUD — Original Display (V25)
 
-This is the upgraded version of the working M02S Jarvis app.
+This is the iPhone-native SolosDirect HUD app for the original Solos 428 x 240 waveguide display, restored from the proven-compiling `jarvis-hud-first-ios-v25-20261022` codebase.
 
-## What changed
+## Features
+- 7 HUD pages: Dashboard, Navigation, Live Captions, Translation to English, Messages, Jarvis AI, Timers/Reminders
+- Front/back on-phone HUD controls and optional hardware control learning when packets reach the app
+- Phone time/date, pedometer steps/distance, battery, optional Apple Health heart rate
+- English captions from on-device speech recognition, offline language packs for Apple Translation
+- Manually pinned messages and iOS Shortcuts relay (iOS doesn't expose all iMessages)
+- Local iPhone Foundation Models where supported, and optional network-accessible Ollama server with optional search
+- Cached 428 x 240 HUD rendering with reduced refresh load
 
-- Detects the phrase **“Hey Jarvis”** inside the app.
-- Keeps the microphone session active with the iOS `audio` background mode.
-- Keeps the M02S BLE connection/restoration active with `bluetooth-central` background mode.
-- Prefers a Bluetooth HFP microphone (the glasses mic) when iOS exposes one.
-- Falls back to the iPhone microphone if the glasses do not expose an HFP input.
-- Automatically reconnects to the saved glasses.
-- Sends the already-confirmed M02S wake packet when “Hey Jarvis” is detected.
-- Still includes the **Wake Jarvis** App Intent, so iOS Vocal Shortcuts can be used as a second fallback.
+## IPA
+[Build Jarvis Solos HUD IPA](https://github.com/nexerds-wq/jarvisipa/actions/workflows/main.yml). After a successful run, open **Artifacts** and download **Jarvis-Solos-HUD-V25-unsigned-IPA**. Extract the IPA and sign/sideload it using your own Apple account with Sideloadly or another legitimate signer.
 
-## Why the phone handles “Hey Jarvis”
+The IPA is unsigned and requires iOS 26 or newer for the Apple Foundation Models / Translation features.
 
-The HeyCyan iOS SDK files you provided show that the glasses have an onboard wake-word switch, but the documented onboard phrase is **“Hey Cyan.”** The SDK exposes enable/disable for that detector, not a way to replace its model with “Hey Jarvis.”
+## Original Solos connection limits
+The original Solos LCD/OLED display uses a proprietary Bluetooth Classic RFCOMM image channel (428 x 240 RLE565). Normal iOS Bluetooth pairing and audio do **not** enable access to that channel. The app includes ExternalAccessory connection testing and the display packet renderer, but physical display delivery works only when the glasses expose a compatible authorized ExternalAccessory data stream. A prior successful IPA build confirms compilation, *not* glass-lens display operation.
 
-The same SDK research also confirms the glasses microphone can appear to iOS as a normal Bluetooth HFP input. V2 uses that route when it is available and performs the custom “Hey Jarvis” detection on the iPhone.
-
-## Build and download the IPA from GitHub
-
-The working Swift iOS build runs automatically when Jarvis source files change. You can also start it manually:
-
-1. Open [Jarvis IPA GitHub Actions](https://github.com/nexerds-wq/jarvisipa/actions/workflows/main.yml).
-2. Choose **Build Jarvis Glasses IPA** and click **Run workflow**.
-3. Open the completed run, then download the **JarvisGlasses-unsigned-IPA** artifact.
-4. Unzip that GitHub artifact. Inside is **JarvisGlasses-unsigned.ipa**.
-5. Sign and sideload the IPA with Sideloadly or another trusted signing tool. It is **unsigned**, so it cannot be installed by tapping the file on an iPhone.
-
-**Verified build:** [GitHub Actions run 39888798902](https://github.com/nexerds-wq/jarvisipa/actions/runs/39888798902) finished successfully on October 22, 2026 (Eastern time).
-
-**Compatibility note:** This builds the native Swift JarvisGlasses app (M02S BLE assistant and Solos HUD preview/diagnostics), **not** the separate Flutter `solos_hud` project. Building the IPA does not unlock unrestricted Bluetooth Classic RFCOMM or guarantee that an older Solos lens display can receive frames from an iPhone.
-
-## First setup
-
-1. Open **Jarvis Glasses**.
-2. Allow Bluetooth.
-3. Tap **Scan**.
-4. Select the M02S.
-5. Wait until it says **M02S ready ✓**.
-6. Tap **Test Jarvis** and make sure the glasses enter the same AI/listening mode as before.
-7. Turn on **Listen for Hey Jarvis**.
-8. Allow **Microphone** and **Speech Recognition**.
-9. Look at **Microphone** in the app. If the glasses expose HFP, the glasses/Bluetooth route should appear there.
-10. Say **Hey Jarvis**. The app should immediately send the BLE wake command.
-
-## Background / locked test
-
-1. Keep **Listen for Hey Jarvis** turned on.
-2. Leave the app normally. Do **not** swipe-force-close it.
-3. Lock the iPhone.
-4. Wait a few seconds.
-5. Say **Hey Jarvis**.
-6. Check whether the M02S goes into AI/listening mode.
-
-The project requests both `audio` and `bluetooth-central` iOS background modes. That gives the app the correct mechanisms to continue listening and keep BLE alive while backgrounded/locked. iOS still controls process lifetime, so a force-close, reboot, permission change, or system resource pressure can stop it. Reopening the app restarts the services.
-
-## Most reliable fallback if iOS suspends the listener
-
-The app still exposes an App Intent named **Wake Jarvis**.
-
-On the iPhone:
-
-`Settings > Accessibility > Vocal Shortcuts > Add Action > Wake Jarvis`
-
-Train the phrase:
-
-`Hey Jarvis`
-
-That lets the iPhone's own system-level Vocal Shortcuts detector trigger the same BLE wake action.
-
-## BLE values used
-
-- Service: `DE5BF728-D711-4E47-AF26-65E3012A5DC7`
-- Write characteristic: `DE5BF72A-D711-4E47-AF26-65E3012A5DC7`
-- Write type: without response
-- Wake packet: `BC4103009052020107`
-
-## Sideloading
-
-With normal free Apple-ID signing, the app usually needs to be resigned periodically. Sideloadly can be used again when the signature expires.
+The existing `JarvisGlasses/` folder remains in this repository as an older separate M02S app; the current IPA workflow builds `SolosDirectiOS/` instead.
