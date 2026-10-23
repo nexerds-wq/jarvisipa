@@ -35,6 +35,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var lastCaptionDelivered = ""
     private var generation = 0
     private var tapInstalled = false
+    private let requestLock = NSLock()
+    private var activeSpeechRecognizer: SFSpeechRecognizer?
     private var observerTokens = [NSObjectProtocol]()
     private var failureCount = 0
     private var lastRestart = Date.distantPast
@@ -162,6 +164,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         captureRequest.addsPunctuation = true
         captureRequest.contextualStrings = ["Hey Jarvis", "Hola", "Oye Jarvis", "navegación", "traducción"]
         request = captureRequest
+        activeSpeechRecognizer = speech
 
         do {
             let audio = AVAudioSession.sharedInstance()
@@ -198,8 +201,10 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                 tapInstalled = false
             }
             input.installTap(onBus:0,bufferSize:1024,format:format) { [weak self] buffer, _ in
-                captureRequest.append(buffer)
                 guard let self else { return }
+                self.requestLock.lock()
+                self.request?.append(buffer)
+                self.requestLock.unlock()
                 self.buffersCaptured += 1
                 if self.buffersCaptured % 45 == 0 {
                     let count = self.buffersCaptured
@@ -217,12 +222,48 @@ final class OfflineCaptionService: NSObject, ObservableObject {
             failureCount = 0
             status = "\(recognizerMode) • \(recognizedLanguage) • \(microphoneRoute)"
             let current = generation
-            // Recognition sessions can expire. Rotate proactively so the
-            // listener keeps working while the HUD remains selected.
-            DispatchQueue.main.asyncAfter(deadline:.now()+48) { [weak self] in
-                guard let self, self.desired, self.generation == current else { return }
-                self.scheduleRestart(reason:"Rotating 48-second speech session")
-            }
+            startCaptionTask(speech,captureRequest,generation:current)
+            scheduleCaptionTaskRotation(generation:current)
+        } catch {
+            starting = false
+            cleanup()
+            scheduleRestart(reason:"Audio start failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func scheduleCaptionTaskRotation(generation:Int) {
+        DispatchQueue.main.asyncAfter(deadline:.now()+48) { [weak self] in
+            guard let self, self.desired, self.generation == generation,
+                  self.engine.isRunning else { return }
+            self.rotateCaptionTask()
+        }
+    }
+
+    private func rotateCaptionTask() {
+        guard desired, isListening, engine.isRunning, !audioInterrupted,
+              let speech = activeSpeechRecognizer else { return }
+        generation += 1
+        let current = generation
+        task?.cancel()
+        task = nil
+        let next = SFSpeechAudioBufferRecognitionRequest()
+        next.shouldReportPartialResults = true
+        next.requiresOnDeviceRecognition = onDeviceOnly && speech.supportsOnDeviceRecognition
+        next.taskHint = .dictation
+        next.addsPunctuation = true
+        next.contextualStrings = ["Hey Jarvis","Hola","Oye Jarvis","navegación","traducción"]
+        requestLock.lock()
+        request?.endAudio()
+        request = next
+        requestLock.unlock()
+        startCaptionTask(speech,next,generation:current)
+        scheduleCaptionTaskRotation(generation:current)
+        status = "\(recognizerMode) • microphone remains active"
+    }
+
+    private func startCaptionTask(_ speech:SFSpeechRecognizer,
+                                  _ captureRequest:SFSpeechAudioBufferRecognitionRequest,
+                                  generation current:Int) {
             task = speech.recognitionTask(with:captureRequest) { [weak self] result, error in
                 DispatchQueue.main.async {
                     guard let self, self.desired, self.generation == current else { return }
@@ -249,21 +290,17 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                             }
                         }
                         if result.isFinal {
-                            self.scheduleRestart(reason:"Caption utterance completed")
+                            self.rotateCaptionTask()
                             return
                         }
                     }
                     if let error {
                         self.status = "Speech error: \(error.localizedDescription)"
-                        self.scheduleRestart(reason:"Speech recognizer stopped")
+                        self.rotateCaptionTask()
                     }
                 }
             }
-        } catch {
-            starting = false
-            cleanup()
-            scheduleRestart(reason:"Audio start failed: \(error.localizedDescription)")
-        }
+
     }
 
     private func scheduleRestart(reason:String) {
@@ -317,8 +354,11 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         // from previous speech sessions.
         task?.cancel()
         task = nil
+        requestLock.lock()
         request?.endAudio()
         request = nil
+        requestLock.unlock()
+        activeSpeechRecognizer = nil
         isListening = false
         starting = false
     }
