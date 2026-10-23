@@ -419,7 +419,13 @@ struct JarvisHUDHome: View {
                     Button("Back") { handleMusicCommand(.previous) }
                 }.buttonStyle(.bordered)
                 Text(music.status).font(.caption).foregroundStyle(.green)
-                Text("Requires Music access and an Apple Music catalog subscription. Apple Music plays through the iPhone or connected audio headset.")
+                if music.searchURL != nil {
+                    Button("OPEN IN APPLE MUSIC • SEARCH FULL CATALOG") {
+                        music.openSearchInMusic()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                Text("Plays saved Music library tracks directly — no developer token needed. If a track isn't in your library, use Open in Apple Music to find it.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
         default:
