@@ -74,6 +74,7 @@ struct JarvisHUDHome: View {
     @State private var visionWizardPresented = false
     @AppStorage("hudHardwareBrightnessPreference") private var hardwareBrightnessPreference = 2
     @AppStorage("hudVisionActiveEye") private var hudActiveEye = "OD"
+    @State private var rightPrescriptionActivated = false
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
     @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
     @State private var speakReplies = true
@@ -611,6 +612,20 @@ struct JarvisHUDHome: View {
             Text("Scientific A/B comparison: sample letters, glare/contrast, and horizontal/vertical edge clarity. The app sends real 428×240 test frames to the accessory session.")
                 .font(.caption)
             Text("Active eye preset: \(hudActiveEye). Only the eye viewing the monocular HUD uses this preset.")
+            Text("YOUR RIGHT-EYE RX: −2.00 SPH / −4.50 CYL × 15°")
+                .font(.caption.bold()).foregroundStyle(.yellow)
+            Button("APPLY MY RIGHT-EYE READABILITY PROFILE") {
+                let profile = JarvisVisionProfileStorage.read(.right) ??
+                    JarvisVisionProfile.prescriptionStartingPoint(.right)
+                JarvisVisionProfileStorage.activate(profile,eye:.right)
+                hudActiveEye = "OD"
+                rightPrescriptionActivated = true
+                drawHUD()
+            }.buttonStyle(.borderedProminent)
+            if rightPrescriptionActivated {
+                Text("Right-eye readability settings applied. This changes pixels and text, not optical prescription power.")
+                    .font(.caption2).foregroundStyle(.green)
+            }
                 .font(.caption2).foregroundStyle(.secondary)
             Button("START VISION CALIBRATION WIZARD") {
                 visionWizardPresented = true
