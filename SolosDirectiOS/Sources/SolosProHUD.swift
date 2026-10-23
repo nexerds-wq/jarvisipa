@@ -6,16 +6,24 @@ import UIKit
 enum SolosProHUD {
     static let w: CGFloat = 428
     static let h: CGFloat = 240
-    static let mint = UIColor(red: 0.30, green: 1.0, blue: 0.78, alpha: 1)
+    static var mint: UIColor { JarvisHUDVision.accent }
+    static var blue: UIColor { JarvisHUDVision.accent }
+    static var amber: UIColor { JarvisHUDVision.accent }
+    static var pale: UIColor { JarvisHUDVision.foreground }
+    static var dim: UIColor { JarvisHUDVision.dimmed }
+    static var panel: UIColor { JarvisHUDVision.panel }
+
+    /* static let mint = UIColor(red: 0.30, green: 1.0, blue: 0.78, alpha: 1)
     static let blue = UIColor(red: 0.35, green: 0.87, blue: 1.0, alpha: 1)
     static let amber = UIColor(red: 1, green: 0.78, blue: 0.36, alpha: 1)
     static let pale = UIColor(white: 0.96, alpha: 1)
     static let dim = UIColor(red: 0.39, green: 0.60, blue: 0.62, alpha: 1)
     static let panel = UIColor(red: 0.045, green: 0.12, blue: 0.135, alpha: 1)
 
+    */
     static func draw(_ text: String, x: CGFloat, y: CGFloat, size: CGFloat, color: UIColor, bold: Bool = false, maxWidth: CGFloat = 400) {
-        let weight: UIFont.Weight = bold ? .black : .semibold
-        var fontSize = size
+        let weight: UIFont.Weight = JarvisHUDVision.thickText ? .black : (bold ? .black : .semibold)
+        var fontSize = size * JarvisHUDVision.textScale
         var font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: weight)
         var t = text as NSString
         while t.size(withAttributes: [.font: font]).width > maxWidth && fontSize > 12 {
@@ -152,7 +160,7 @@ enum SolosProHUD {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byWordWrapping
         style.lineSpacing = 3
-        let font = UIFont.systemFont(ofSize:22,weight:.bold)
+        let font = UIFont.systemFont(ofSize:22 * JarvisHUDVision.textScale,weight:JarvisHUDVision.thickText ? .black : .bold)
         var result = ""
         for word in words.reversed() {
             let proposal = result.isEmpty ? word : word + " " + result
@@ -172,9 +180,9 @@ enum SolosProHUD {
         paragraph.lineBreakMode = .byWordWrapping
         paragraph.lineSpacing = 3
         let rect = CGRect(x:17,y:top,width:394,height:height)
-        var size = preferred
-        while size > minimum {
-            let font = UIFont.systemFont(ofSize:size,weight:.bold)
+        var size = preferred * JarvisHUDVision.textScale
+        while size > minimum * JarvisHUDVision.textScale {
+            let font = UIFont.systemFont(ofSize:size,weight:JarvisHUDVision.thickText ? .black : .bold)
             let bounds = (text as NSString).boundingRect(
                 with: CGSize(width:rect.width,height:CGFloat.greatestFiniteMagnitude),
                 options:[.usesLineFragmentOrigin,.usesFontLeading],
@@ -193,7 +201,7 @@ enum SolosProHUD {
     static func messagePages(_ text: String) -> [String] {
         let clean = text.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !clean.isEmpty else { return ["NO MESSAGE YET"] }
-        let font = UIFont.systemFont(ofSize:21,weight:.bold)
+        let font = UIFont.systemFont(ofSize:21 * JarvisHUDVision.textScale,weight:JarvisHUDVision.thickText ? .black : .bold)
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byWordWrapping
         style.lineSpacing = 3
@@ -221,7 +229,7 @@ enum SolosProHUD {
     /// Wrap complete AI answers into legible 428x240 OLED pages. Never silently
     /// cut off the last sentence simply because one page is too small.
     static func answerPages(_ answer: String) -> [String] {
-        let font = UIFont.systemFont(ofSize:26,weight:.black)
+        let font = UIFont.systemFont(ofSize:26 * JarvisHUDVision.textScale,weight:.black)
         let words = answer.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         guard !words.isEmpty else { return ["READY TO ANSWER"] }
         var pages = [String]()

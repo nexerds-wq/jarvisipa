@@ -64,6 +64,12 @@ struct JarvisHUDHome: View {
     @State private var aiBusy = false
     @State private var showConnection = false
     @State private var showSettings = false
+    @AppStorage("hudVisionBrightness") private var hudBrightness = 1.0
+    @AppStorage("hudVisionContrast") private var hudContrast = 1.3
+    @AppStorage("hudVisionSharpness") private var hudSharpness = 0.25
+    @AppStorage("hudVisionTextScale") private var hudTextScale = 1.12
+    @AppStorage("hudVisionBold") private var hudBold = true
+    @AppStorage("hudVisionHighVisibility") private var hudHighVisibility = false
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
     @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
     @State private var speakReplies = true
@@ -121,7 +127,7 @@ struct JarvisHUDHome: View {
                     }
                     connectionSummary
                     if showConnection { connectionPanel }
-                    if showSettings { settingsPanel }
+                    if showSettings { visionPanel; settingsPanel }
                     Text("Actual glasses display needs an iOS-authorized accessory data connection. Pairing Bluetooth audio alone does not give this app OLED access.")
                         .font(.caption2).foregroundStyle(.orange)
                 }
@@ -538,6 +544,49 @@ struct JarvisHUDHome: View {
         }
     }
 
+    private var visionPanel: some View {
+        section("HUD DISPLAY TUNING • 428 × 240") {
+            Text("Adjust the actual glasses frame. The preview updates as you move each slider.")
+                .font(.caption2).foregroundStyle(.secondary)
+            Text("Pixel brightness (not hardware OLED power): \(Int(hudBrightness * 100))%")
+            Slider(value:$hudBrightness,in:0.35...1.7,step:0.05)
+            Text("Contrast: \(Int(hudContrast * 100))%")
+            Slider(value:$hudContrast,in:0.7...2.3,step:0.05)
+            Text("Sharpening: \(Int(hudSharpness * 100))%")
+            Slider(value:$hudSharpness,in:0...1.4,step:0.05)
+            Text("Text size: \(Int(hudTextScale * 100))%")
+            Slider(value:$hudTextScale,in:0.85...1.55,step:0.05)
+            Toggle("Extra bold letters",isOn:$hudBold)
+            Toggle("Maximum visibility • yellow/white on black",isOn:$hudHighVisibility)
+            HStack {
+                Button("MAX READABILITY") {
+                    hudBrightness = 1.25
+                    hudContrast = 1.8
+                    hudSharpness = 0.55
+                    hudTextScale = 1.35
+                    hudBold = true
+                    hudHighVisibility = true
+                }.buttonStyle(.borderedProminent)
+                Button("RESET") {
+                    hudBrightness = 1
+                    hudContrast = 1.3
+                    hudSharpness = 0.25
+                    hudTextScale = 1.12
+                    hudBold = true
+                    hudHighVisibility = false
+                }.buttonStyle(.bordered)
+            }
+            Text("Bigger text shows fewer words per page. HUD brightness cannot exceed the optical hardware limit.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .onChange(of:hudBrightness) { _,_ in drawHUD() }
+        .onChange(of:hudContrast) { _,_ in drawHUD() }
+        .onChange(of:hudSharpness) { _,_ in drawHUD() }
+        .onChange(of:hudTextScale) { _,_ in drawHUD() }
+        .onChange(of:hudBold) { _,_ in drawHUD() }
+        .onChange(of:hudHighVisibility) { _,_ in drawHUD() }
+    }
+
     private var settingsPanel: some View {
         section("AI • PRIVACY • SPEECH") {
             Toggle("Online Ollama (off = iPhone on-device AI)",isOn:$online)
@@ -929,11 +978,12 @@ struct JarvisHUDHome: View {
             speed:phone.speed,battery:phone.battery,gps:phone.coordinates,
             message:text,detail:detail,sender:sender,
             senderPhoto:senderPhoto,messagePage:currentMessagePage + 1,pageCount:messagePages.count)
-        image = output
+        let tuned = JarvisHUDVision.apply(to:output)
+        image = tuned
         // sendHUDImage drops obsolete ordinary frames while busy. No new BLE
         // transport is fabricated if iOS does not expose an accessory session.
         if !accessory.connectedProtocol.isEmpty {
-            accessory.sendHUDImage(output,priority:mode == 4 || mode == 5)
+            accessory.sendHUDImage(tuned,priority:mode == 4 || mode == 5)
         }
     }
 
