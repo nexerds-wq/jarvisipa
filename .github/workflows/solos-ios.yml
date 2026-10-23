@@ -1,5 +1,4 @@
-name: Build Original Solos HUD iOS IPA
-
+name: Jarvis Fast IPA
 on:
   workflow_dispatch:
 
@@ -7,54 +6,47 @@ permissions:
   contents: read
 
 jobs:
-  build-ios:
+  ipa:
     runs-on: macos-latest
+    timeout-minutes: 60
     steps:
-      - name: Download original Solos HUD source
+      - name: Check out Solos HUD
         uses: actions/checkout@v4
-        with:
-          repository: StudentBroken/solos-hud
-          path: upstream
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - name: Install dependencies
-        working-directory: upstream/solos_hud
+          cache: true
+
+      - name: Download Flutter dependencies
+        working-directory: solos_hud
         run: flutter pub get
-      - name: Analyze Flutter and Dart code
-        working-directory: upstream/solos_hud
-        continue-on-error: true
-        run: flutter analyze
-      - name: Run Flutter unit tests
-        working-directory: upstream/solos_hud
-        continue-on-error: true
-        run: flutter test
-      - name: Add iOS microphone and speech recognition permissions
-        working-directory: upstream/solos_hud
+
+      - name: Check and apply speed fixes
         run: |
-          python3 - <<'PY'
-          import plistlib
-          from pathlib import Path
-          p = Path("ios/Runner/Info.plist")
-          with p.open("rb") as f:
-              data = plistlib.load(f)
-          data["NSMicrophoneUsageDescription"] = "Solos HUD uses the microphone for voice commands."
-          data["NSSpeechRecognitionUsageDescription"] = "Solos HUD uses speech recognition to understand voice commands."
-          with p.open("wb") as f:
-              plistlib.dump(data, f)
-          PY
-      - name: Build unsigned iOS app
-        working-directory: upstream/solos_hud
+          python3 apply_fast_fix.py --check
+          python3 apply_fast_fix.py --apply
+
+      - name: Build release iOS app without signing
+        working-directory: solos_hud
         run: flutter build ios --release --no-codesign
+
       - name: Package IPA
-        working-directory: upstream/solos_hud
+        working-directory: solos_hud
         run: |
-          mkdir -p Payload
-          cp -R build/ios/iphoneos/Runner.app Payload/
-          zip -qry SolosHUD-unsigned.ipa Payload
-      - name: Upload IPA
+          set -euo pipefail
+          test -f build/ios/iphoneos/Runner.app/Info.plist
+          test -f build/ios/iphoneos/Runner.app/Runner
+          mkdir -p ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app ipa/Payload/
+          (cd ipa && ditto -c -k --sequesterRsrc --keepParent Payload Jarvis-Fast-unsigned.ipa)
+          unzip -t ipa/Jarvis-Fast-unsigned.ipa | tail -n 3
+
+      - name: Attach IPA file
         uses: actions/upload-artifact@v4
         with:
-          name: SolosHUD-unsigned-IPA
-          path: upstream/solos_hud/SolosHUD-unsigned.ipa
+          name: Jarvis-Fast-unsigned-IPA
+          path: solos_hud/ipa/Jarvis-Fast-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
