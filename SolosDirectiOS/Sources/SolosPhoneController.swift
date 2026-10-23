@@ -38,6 +38,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var wakeAudioTapInstalled = false
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var speechTask: SFSpeechRecognitionTask?
+    private let recognitionRequestLock = NSLock()
     private var heardWake = false
     private var lastQuestion = ""
     private var continuousWakeWanted = false
@@ -657,23 +658,62 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                 node.removeTap(onBus:0)
                 wakeAudioTapInstalled = false
             }
-            node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in request.append(buffer) }
+            // Tap survives speech-task rotation; changing recognizers must NOT
+            // stop AVAudioEngine or reactivate the system audio session.
+            node.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+                guard let self else { return }
+                self.recognitionRequestLock.lock()
+                self.recognitionRequest?.append(buffer)
+                self.recognitionRequestLock.unlock()
+            }
             wakeAudioTapInstalled = true
             audioEngine.prepare()
             try audioEngine.start()
             listening = true
             recognizerStartedAt = Date()
             voiceStatus = "Microphone active — listening for Hey Jarvis"
-            // Background audio works only while a real audio session remains
-            // active; no silent audio playback or fake background task.
-            // Apple documents a roughly 60-second recognition limit. Rotate
-            // tasks before it expires instead of silently losing the wake word.
-            DispatchQueue.main.asyncAfter(deadline:.now()+48) { [weak self] in
-                guard let self, self.recognitionGeneration == generation,
-                      self.listening, !self.heardWake else { return }
-                self.restartRecognitionSoon()
-            }
-            speechTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+            // Rotate only the speech recognizer, keeping the microphone stream
+            // running and the audio route stable for Apple Music.
+            scheduleWakeTaskRotation(generation:generation)
+            startWakeTask(request,recognizer:speechRecognizer,generation:generation)
+        } catch {
+            voiceStatus = "Microphone could not start: \(error.localizedDescription)"
+            stopListening()
+        }
+    }
+    private func scheduleWakeTaskRotation(generation:Int) {
+        DispatchQueue.main.asyncAfter(deadline:.now() + 48) { [weak self] in
+            guard let self, self.recognitionGeneration == generation,
+                  self.listening, !self.heardWake else { return }
+            self.rotateWakeRecognitionTask()
+        }
+    }
+
+    private func rotateWakeRecognitionTask() {
+        guard listening, continuousWakeWanted, !hudCaptionsActive,
+              audioEngine.isRunning, !heardWake else { return }
+        guard let recognizer = speechRecognizer, recognizer.isAvailable else { return }
+        recognitionGeneration += 1
+        let generation = recognitionGeneration
+        speechTask?.cancel()
+        speechTask = nil
+        recognitionRequestLock.lock()
+        recognitionRequest?.endAudio()
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        recognitionRequest?.shouldReportPartialResults = true
+        recognitionRequest?.requiresOnDeviceRecognition = true
+        let newRequest = recognitionRequest
+        recognitionRequestLock.unlock()
+        guard let newRequest else { return }
+        recognizerStartedAt = Date()
+        voiceStatus = "Listening for Hey Jarvis (music uninterrupted)"
+        startWakeTask(newRequest,recognizer:recognizer,generation:generation)
+        scheduleWakeTaskRotation(generation:generation)
+    }
+
+    private func startWakeTask(_ request:SFSpeechAudioBufferRecognitionRequest,
+                               recognizer:SFSpeechRecognizer,generation:Int) {
+            speechTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
                 DispatchQueue.main.async {
                     guard let self, self.recognitionGeneration == generation else { return }
                     if let result {
@@ -708,29 +748,19 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                             if self.heardWake && !self.pendingVoiceQuestion.isEmpty {
                                 self.submitPendingVoiceQuestion(generation:generation)
                             } else {
-                                self.restartRecognitionSoon()
+                                self.rotateWakeRecognitionTask()
                             }
                         }
                     }
                     if let error, self.listening {
-                        let rearm = self.continuousWakeWanted
-                        self.stopListening()
-                        self.continuousWakeWanted = rearm
-                        self.voiceStatus = "Recognition interrupted: \(error.localizedDescription). Restarting..."
-                        if rearm {
-                            DispatchQueue.main.asyncAfter(deadline:.now()+1.2) { [weak self] in
-                                guard let self, self.continuousWakeWanted, !self.listening else { return }
-                                self.startListening()
-                            }
-                        }
+                        self.voiceStatus = "Speech task rotated after error: \(error.localizedDescription)"
+                        self.rotateWakeRecognitionTask()
                     }
                 }
             }
-        } catch {
-            voiceStatus = "Microphone could not start: \(error.localizedDescription)"
-            stopListening()
-        }
+
     }
+
     // Do not decide a question is complete by character count. Every new
     // transcription cancels the previous silence timer. A natural pause of
     // 0.75 seconds (or Apple's final recognition result) submits the question.
@@ -800,10 +830,12 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             audioEngine.inputNode.removeTap(onBus: 0)
             wakeAudioTapInstalled = false
         }
+        recognitionRequestLock.lock()
         recognitionRequest?.endAudio()
+        recognitionRequest = nil
+        recognitionRequestLock.unlock()
         speechTask?.cancel()
         speechTask = nil
-        recognitionRequest = nil
         listening = false
         voiceStatus = "Not listening"
     }
