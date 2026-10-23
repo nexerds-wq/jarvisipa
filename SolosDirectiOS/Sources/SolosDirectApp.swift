@@ -495,9 +495,10 @@ struct SolosDirectHome: View {
         // Speech recognizer emits partial strings repeatedly. Rendering and
         // encoding a fresh 428×240 image on every fragment blocks the main
         // thread and can accumulate Bluetooth packets faster than the glasses
-        // can accept them. Coalesce into at most one new frame per 2.2 seconds.
+        // can accept them. Coalesce within 0.42 seconds and let the
+        // asynchronous encoder discard superseded frames.
         if mode == 2 || mode == 3 {
-            let remaining = 2.2 - Date().timeIntervalSince(lastLiveHUDFrameAt)
+            let remaining = 0.42 - Date().timeIntervalSince(lastLiveHUDFrameAt)
             if remaining > 0 {
                 if pendingLiveHUDWork == nil {
                     let work = DispatchWorkItem {
@@ -546,6 +547,9 @@ struct SolosDirectHome: View {
         lensAnswerPage = ""
         answerShowingUntil = .distantPast
         messageRotationID = UUID()
+        // Switching to captions must render the selected HUD immediately,
+        // not wait for the previous screen's live-frame throttle.
+        lastLiveHUDFrameAt = .distantPast
         if selected == 2 || selected == 3 {
             beginCaptions(mode:selected)
         } else {
@@ -1000,7 +1004,7 @@ struct SolosDirectHome: View {
             Text("SOLOS  /  iPHONE")
                 .font(.system(.title2, design: .monospaced).bold())
                 .foregroundStyle(.mint)
-            Text("V23: Cached previews • Stable microphone • Less battery + RAM use")
+            Text("V24 TURBO: Immediate captions • Fast translation • Streaming Jarvis")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .padding(.vertical, 10)
