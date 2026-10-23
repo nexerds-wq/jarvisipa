@@ -1,70 +1,52 @@
-name: Build Jarvis Solos HUD IPA
-
+name: Jarvis Fast IPA
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "solos_hud/**"
-      - ".github/workflows/build-ipa.yml"
 
 permissions:
   contents: read
 
-concurrency:
-  group: ios-ipa-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  build-unsigned-ipa:
-    name: Build iPhone app
+  ipa:
     runs-on: macos-latest
-    timeout-minutes: 50
-    defaults:
-      run:
-        working-directory: solos_hud
+    timeout-minutes: 60
     steps:
-      - name: Get project files
+      - name: Check out Solos HUD
         uses: actions/checkout@v4
 
-      - name: Install Flutter
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      - name: Show build tools
-        run: |
-          flutter --version
-          xcodebuild -version
-          pod --version
-
-      - name: Get Flutter dependencies
+      - name: Download Flutter dependencies
+        working-directory: solos_hud
         run: flutter pub get
 
-      - name: Build iOS without signing
+      - name: Check and apply speed fixes
+        run: |
+          python3 apply_fast_fix.py --check
+          python3 apply_fast_fix.py --apply
+
+      - name: Build release iOS app without signing
+        working-directory: solos_hud
         run: flutter build ios --release --no-codesign
 
-      - name: Package unsigned IPA
+      - name: Package IPA
+        working-directory: solos_hud
         run: |
           set -euo pipefail
-          APP="build/ios/iphoneos/Runner.app"
-          test -d "$APP"
-          test -f "$APP/Info.plist"
-          test -f "$APP/Runner"
-          plutil -lint "$APP/Info.plist"
+          test -f build/ios/iphoneos/Runner.app/Info.plist
+          test -f build/ios/iphoneos/Runner.app/Runner
           mkdir -p ipa/Payload
-          cp -R "$APP" ipa/Payload/
-          (
-            cd ipa
-            /usr/bin/ditto -c -k --sequesterRsrc --keepParent Payload Jarvis-Solos-HUD-unsigned.ipa
-          )
-          unzip -t ipa/Jarvis-Solos-HUD-unsigned.ipa | tail -n 3
+          cp -R build/ios/iphoneos/Runner.app ipa/Payload/
+          (cd ipa && ditto -c -k --sequesterRsrc --keepParent Payload Jarvis-Fast-unsigned.ipa)
+          unzip -t ipa/Jarvis-Fast-unsigned.ipa | tail -n 3
 
-      - name: Upload downloadable IPA
+      - name: Attach IPA file
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-Solos-HUD-unsigned-IPA
-          path: solos_hud/ipa/Jarvis-Solos-HUD-unsigned.ipa
+          name: Jarvis-Fast-unsigned-IPA
+          path: solos_hud/ipa/Jarvis-Fast-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
