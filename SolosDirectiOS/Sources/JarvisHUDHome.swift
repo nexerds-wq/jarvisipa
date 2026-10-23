@@ -72,6 +72,7 @@ struct JarvisHUDHome: View {
     @AppStorage("hudVisionHighVisibility") private var hudHighVisibility = false
     @AppStorage("hudVisionDirectional") private var hudDirectional = 0
     @State private var visionWizardPresented = false
+    @AppStorage("hudHardwareBrightnessPreference") private var hardwareBrightnessPreference = 2
     @AppStorage("hudVisionActiveEye") private var hudActiveEye = "OD"
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
     @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
@@ -552,6 +553,16 @@ struct JarvisHUDHome: View {
 
     private var visionPanel: some View {
         section("HUD DISPLAY TUNING • 428 × 240") {
+            Text("SOLOS WIDESCREEN • REAL DISPLAY BRIGHTNESS")
+                .font(.caption.bold()).foregroundStyle(.green)
+            Picker("Hardware brightness preference",selection:$hardwareBrightnessPreference) {
+                Text("Low").tag(0)
+                Text("Medium").tag(1)
+                Text("High").tag(2)
+                Text("Auto").tag(3)
+            }.pickerStyle(.segmented)
+            Text("Saved preference only: this app does NOT transmit a hardware brightness command until the original Widescreen command is verified. Set the actual level in the official Solos app under Settings → Devices → Headset Brightness.")
+                .font(.caption2).foregroundStyle(.orange)
             Text("Adjust the actual glasses frame. The preview updates as you move each slider.")
                 .font(.caption2).foregroundStyle(.secondary)
             Text("Pixel brightness (not hardware OLED power): \(Int(hudBrightness * 100))%")
@@ -566,12 +577,13 @@ struct JarvisHUDHome: View {
             Toggle("Maximum visibility • yellow/white on black",isOn:$hudHighVisibility)
             HStack {
                 Button("MAX READABILITY") {
-                    hudBrightness = 1.25
-                    hudContrast = 1.8
-                    hudSharpness = 0.55
-                    hudTextScale = 1.35
+                    hudBrightness = 1.0
+                    hudContrast = 1.65
+                    hudSharpness = 0.08
+                    hudTextScale = 1.42
                     hudBold = true
-                    hudHighVisibility = true
+                    hudHighVisibility = false
+                    hudDirectional = 0
                 }.buttonStyle(.borderedProminent)
                 Button("RESET") {
                     hudBrightness = 1
@@ -580,6 +592,7 @@ struct JarvisHUDHome: View {
                     hudTextScale = 1.12
                     hudBold = true
                     hudHighVisibility = false
+                    hudDirectional = 0
                 }.buttonStyle(.bordered)
             }
             Text("Bigger text shows fewer words per page. HUD brightness cannot exceed the optical hardware limit.")
