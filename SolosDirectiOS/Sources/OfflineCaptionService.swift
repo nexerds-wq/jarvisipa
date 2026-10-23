@@ -30,7 +30,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var desired = false
     private var starting = false
     private var onDeviceOnly = true
-    private var preferPhoneMicrophone = true
+    private var preferPhoneMicrophone = false
     private var lastDisplay = Date.distantPast
     private var lastCaptionDelivered = ""
     private var generation = 0
@@ -89,7 +89,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
 
     /// Setting allowOnlineRecognition true allows Speech to use Apple's network
     /// recognition when on-device recognition is not supported for the language.
-    func start(locale:String, name:String, allowOnlineRecognition:Bool = false, preferPhoneMicrophone:Bool = true) {
+    func start(locale:String, name:String, allowOnlineRecognition:Bool = false, preferPhoneMicrophone:Bool = false) {
         stop()
         audioBuffers = 0
         buffersCaptured = 0
@@ -179,12 +179,26 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                                       options:[.mixWithOthers,.allowBluetoothA2DP,.defaultToSpeaker])
             } else {
                 try audio.setCategory(.playAndRecord,mode:.default,
-                                      options:[.mixWithOthers,.allowBluetoothHFP,.allowBluetoothA2DP,.defaultToSpeaker])
+                                      options:[.mixWithOthers,.allowBluetoothHFP,.defaultToSpeaker])
             }
             try audio.setActive(true)
             if preferPhoneMicrophone,
                let builtIn = audio.availableInputs?.first(where: { $0.portType == .builtInMic }) {
                 try audio.setPreferredInput(builtIn)
+            }
+            if !preferPhoneMicrophone {
+                guard let solosMic = audio.availableInputs?.first(where: {
+                    $0.portType == .bluetoothHFP &&
+                    ($0.portName.localizedCaseInsensitiveContains("Solos") ||
+                     $0.uid.localizedCaseInsensitiveContains("Solos"))
+                }) else {
+                    desired = false
+                    starting = false
+                    status = "SOLOS MIC UNAVAILABLE • Connect Solos Bluetooth microphone in iPhone Settings. No iPhone mic fallback."
+                    cleanup()
+                    return
+                }
+                try audio.setPreferredInput(solosMic)
             }
             microphoneRoute = audio.currentRoute.inputs.map(\.portName).joined(separator:", ")
             if microphoneRoute.isEmpty { microphoneRoute = "No audio input selected" }
@@ -277,7 +291,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                             // HUD frame compression has its own independent
                             // pacing and latest-wins queue, so mic stays fast.
                             if words != self.lastCaptionDelivered &&
-                               Date().timeIntervalSince(self.lastDisplay) >= 0.14 {
+                               Date().timeIntervalSince(self.lastDisplay) >= 0.075 {
                                 self.lastDisplay = Date()
                                 self.lastCaptionDelivered = words
                                 self.onSubtitle?(words)

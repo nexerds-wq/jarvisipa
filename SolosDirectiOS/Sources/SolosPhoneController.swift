@@ -640,12 +640,19 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         do {
             let audio = AVAudioSession.sharedInstance()
             try audio.setCategory(.playAndRecord, mode:.default,
-                                       options:[.mixWithOthers,.allowBluetoothA2DP,.defaultToSpeaker])
-            // Prefer the phone microphone so Bluetooth headphones can keep
-            // high-quality A2DP music instead of switching into HFP call audio.
-            if let builtIn = audio.availableInputs?.first(where:{$0.portType == .builtInMic}) {
-                try? audio.setPreferredInput(builtIn)
+                                       options:[.mixWithOthers,.allowBluetoothHFP,.defaultToSpeaker])
+            // User requested the Solos microphone exclusively. HFP is required
+            // for Bluetooth microphone capture; never silently use iPhone mic.
+            guard let solosMic = audio.availableInputs?.first(where:{
+                $0.portType == .bluetoothHFP &&
+                ($0.portName.localizedCaseInsensitiveContains("Solos") ||
+                 $0.uid.localizedCaseInsensitiveContains("Solos"))
+            }) else {
+                voiceStatus = "Solos microphone unavailable • connect Solos headset audio in iPhone Settings"
+                startingRecognition = false
+                return
             }
+            try audio.setPreferredInput(solosMic)
             try audio.setActive(true, options: .notifyOthersOnDeactivation)
             let node = audioEngine.inputNode
             let format = node.outputFormat(forBus: 0)

@@ -35,6 +35,8 @@ struct JarvisHUDHome: View {
     @State private var lifecycleStatus = ""
     @AppStorage("jarvisListenWhileMusic") private var listenWhileMusic = true
     @AppStorage("jarvisMediaButtonsForHUD") private var mediaButtonsForHUD = false
+    @State private var lastCaptionWakeCommand = ""
+    @State private var lastCaptionWakeAt = Date.distantPast
     @State private var heard = ""
     @State private var translated = ""
     @State private var translationConfiguration: TranslationSession.Configuration?
@@ -107,7 +109,7 @@ struct JarvisHUDHome: View {
     @State private var rightPrescriptionActivated = false
     @State private var visionDiagnosticActive = false
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
-    @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
+    @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = false
     @State private var speakReplies = true
     @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = true
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -292,6 +294,7 @@ struct JarvisHUDHome: View {
         hudWithLifecycle
         .onChange(of: captions.partial) { _, text in
             guard mode == 2 || mode == 3, !text.isEmpty else { return }
+            if handleCaptionWakePhrase(text,isFinal:false) { return }
             if routeVoiceHUDCommand(text,allowMusic:false,allowSystem:false) { return }
             heard = text
             if mode == 2 {
@@ -304,8 +307,9 @@ struct JarvisHUDHome: View {
             }
         }
         .onChange(of: captions.latestFinal) { _, text in
-            considerCompanionTranscript(text)
             guard mode == 2 || mode == 3, !text.isEmpty else { return }
+            if handleCaptionWakePhrase(text,isFinal:true) { return }
+            considerCompanionTranscript(text)
             if routeVoiceHUDCommand(text) { return }
             heard = text
             if mode == 2 {
@@ -1118,7 +1122,7 @@ struct JarvisHUDHome: View {
             drawHUD() // Forced trailing frame after streaming speech settles.
         }
         captionFlushWork = job
-        DispatchQueue.main.asyncAfter(deadline:.now()+0.38,execute:job)
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.18,execute:job)
     }
 
     private func queueTranslation(_ text:String, final:Bool = false) {
@@ -1143,7 +1147,26 @@ struct JarvisHUDHome: View {
             if translated.isEmpty { drawHUD() }
         }
         translationDebounceWork = job
-        DispatchQueue.main.asyncAfter(deadline:.now()+(final ? 0.08 : 0.50),execute:job)
+        DispatchQueue.main.asyncAfter(deadline:.now()+(final ? 0.03 : 0.18),execute:job)
+    }
+
+    // Caption/translation recognizer owns the microphone. Detect wake phrases
+    // in its transcript rather than starting a competing audio engine.
+    private func handleCaptionWakePhrase(_ transcript:String,isFinal:Bool) -> Bool {
+        let lower = transcript.lowercased()
+        guard let range = lower.range(of:"hey jarvis") ?? lower.range(of:"oye jarvis") else { return false }
+        let question = String(transcript[range.upperBound...]).trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !question.isEmpty else { return true }
+        // Do not execute commands on unstable partials; final transcript is
+        // reliable and prevents repeated requests as words are corrected.
+        guard isFinal else { return true }
+        guard question != lastCaptionWakeCommand ||
+              Date().timeIntervalSince(lastCaptionWakeAt) > 8 else { return true }
+        lastCaptionWakeCommand = question
+        lastCaptionWakeAt = Date()
+        if routeVoiceHUDCommand(transcript,wakeAlreadyVerified:true) { return true }
+        talkToCompanion(question)
+        return true
     }
 
     @discardableResult
