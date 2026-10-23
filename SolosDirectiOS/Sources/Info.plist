@@ -12,6 +12,7 @@
 <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
 <key>LSRequiresIPhoneOS</key><true/>
 <key>NSBluetoothAlwaysUsageDescription</key><string>Find Solos glasses and inspect compatible accessory connections.</string>
+<key>NSAppleMusicUsageDescription</key><string>Jarvis searches Apple Music and plays songs when you ask through voice controls.</string>
 <key>NSMicrophoneUsageDescription</key><string>Listen for Hey Jarvis and questions on your iPhone.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Recognize Hey Jarvis and spoken questions with on-device speech processing.</string>
 <key>NSLocationWhenInUseUsageDescription</key><string>Track your route while you navigate, including when the iPhone screen is locked, so the glasses can show updates and speak turns.</string>

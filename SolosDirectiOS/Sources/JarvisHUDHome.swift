@@ -14,6 +14,7 @@ struct JarvisHUDHome: View {
     @StateObject private var handsFree = SolosHandsFreeEngine()
     @StateObject private var captions = OfflineCaptionService()
     @StateObject private var navigation = SolosNavigationEngine()
+    @StateObject private var music = JarvisAppleMusic()
     private let health = HKHealthStore()
 
     @State private var mode = 0
@@ -32,6 +33,8 @@ struct JarvisHUDHome: View {
     @State private var language = "es-ES"
     @State private var answer = "Say Hey Jarvis or ask a question."
     @State private var question = ""
+    @State private var musicQuery = ""
+    @State private var musicOnHUD = false
     @State private var sender = "MESSAGE"
     @State private var message = ""
     @State private var senderPhoto: UIImage?
@@ -120,7 +123,7 @@ struct JarvisHUDHome: View {
         .preferredColorScheme(.dark)
         .onAppear {
             handsFree.onModeChange = { newMode in selectMode(newMode) }
-            phone.onHUDVoiceCommand = { spoken in routeVoiceHUDCommand(spoken) }
+            phone.onHUDVoiceCommand = { spoken in routeVoiceHUDCommand(spoken,wakeAlreadyVerified:true) }
             accessory.onAccessoryPacket = { data in handsFree.input(data) }
             handsFree.enableMediaButtons()
             accessory.refresh()
@@ -156,7 +159,7 @@ struct JarvisHUDHome: View {
         }
         .onChange(of: captions.partial) { _, text in
             guard mode == 2 || mode == 3, !text.isEmpty else { return }
-            if routeVoiceHUDCommand(text) { return }
+            if routeVoiceHUDCommand(text,allowMusic:false) { return }
             heard = text
             if mode == 2 {
                 // The first partial is quick; a trailing frame MUST still
@@ -189,8 +192,15 @@ struct JarvisHUDHome: View {
         }
         .onChange(of: phone.aiAnswer) { _, text in
             guard !online, mode == 5 else { return }
+            musicOnHUD = false
             answer = text
             drawHUD(throttled:true)
+        }
+        .onChange(of: music.status) { _, status in
+            if musicOnHUD {
+                answer = status
+                if mode == 5 { drawHUD() }
+            }
         }
         .onReceive(ticker) { now in
             if mode == 0 { drawHUD(throttled:true) }
@@ -394,6 +404,24 @@ struct JarvisHUDHome: View {
                 Text("Mode: " + (online ? "Ollama server" : "Apple on-device model"))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            section("APPLE MUSIC • VOICE PLAYBACK") {
+                Text("Say: Hey Jarvis, play Blinding Lights by The Weeknd")
+                    .font(.caption).foregroundStyle(.secondary)
+                TextField("Song title and artist",text:$musicQuery)
+                    .textFieldStyle(.roundedBorder)
+                Button("Play requested song") {
+                    handleMusicCommand(.play(musicQuery))
+                }.buttonStyle(.borderedProminent).disabled(music.isBusy)
+                HStack(spacing:12) {
+                    Button("Pause") { handleMusicCommand(.pause) }
+                    Button("Resume") { handleMusicCommand(.resume) }
+                    Button("Next") { handleMusicCommand(.next) }
+                    Button("Back") { handleMusicCommand(.previous) }
+                }.buttonStyle(.bordered)
+                Text(music.status).font(.caption).foregroundStyle(.green)
+                Text("Requires Music access and an Apple Music catalog subscription. Apple Music plays through the iPhone or connected audio headset.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         default:
             section("TIMERS • REMINDERS") {
                 Stepper("Timer: \(timerMinutes) minutes",value:$timerMinutes,in:1...180)
@@ -573,10 +601,17 @@ struct JarvisHUDHome: View {
     }
 
     @discardableResult
-    private func routeVoiceHUDCommand(_ speech:String) -> Bool {
+    private func routeVoiceHUDCommand(_ speech:String,
+                                      wakeAlreadyVerified:Bool = false,
+                                      allowMusic:Bool = true) -> Bool {
+        if allowMusic, let command = JarvisMusicCommand.parse(
+            speech,wakeAlreadyVerified:wakeAlreadyVerified) {
+            handleMusicCommand(command)
+            return true
+        }
         let normalized = speech.folding(options:[.caseInsensitive,.diacriticInsensitive],
                                         locale:Locale(identifier:"en_US")).lowercased()
-        guard normalized.contains("hey jarvis") ||
+        guard wakeAlreadyVerified || normalized.contains("hey jarvis") ||
               normalized.contains("oye jarvis") else { return false }
         let targets: [(Int,[String])] = [
             (2,["captions","caption","subtitles","subtitle","subtitulos"]),
@@ -599,11 +634,33 @@ struct JarvisHUDHome: View {
         return true
     }
 
+    private func handleMusicCommand(_ command:JarvisMusicCommand) {
+        musicOnHUD = true
+        if mode != 5 { handsFree.setMode(5,force:true) }
+        switch command {
+        case .play(let query):
+            musicQuery = query
+            music.playSong(query)
+        case .pause:
+            music.pause()
+        case .resume:
+            music.resume()
+        case .next:
+            music.next()
+        case .previous:
+            music.previous()
+        }
+        answer = music.status
+        lastVoiceHUDCommand = "APPLE MUSIC • " + music.status
+        drawHUD()
+    }
+
     private func drawHUD(throttled:Bool = false) {
         if throttled && Date().timeIntervalSince(lastFrameAt) < (mode == 2 ? 0.25 : 0.6) { return }
         lastFrameAt = Date()
         let detail = mode == 0 ? "HEART " + heartRate + " BPM" :
-            (mode == 3 && translated.isEmpty ? "SPANISH HEARD • TRANSLATING" : "JARVIS • " + names[mode])
+            (mode == 3 && translated.isEmpty ? "SPANISH HEARD • TRANSLATING" :
+            (mode == 5 && musicOnHUD ? "APPLE MUSIC • NOW PLAYING" : "JARVIS • " + names[mode]))
         let text: String
         let renderMode: Int
         switch mode {
@@ -637,6 +694,7 @@ struct JarvisHUDHome: View {
         let query = question.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !query.isEmpty else { return }
         aiBusy = true
+        musicOnHUD = false
         if online {
             let server = ollamaServer, model = ollamaModel, key = ollamaKey, searchKey = serperKey
             Task {

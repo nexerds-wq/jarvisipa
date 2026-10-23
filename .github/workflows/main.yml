@@ -44,6 +44,12 @@ jobs:
           xcrun swiftc -parse-as-library Sources/JarvisLiveClock.swift Tests/LiveClockSmoke.swift -o /tmp/solos-clock-test
           /tmp/solos-clock-test
 
+      - name: Verify Apple Music voice commands
+        working-directory: SolosDirectiOS
+        run: |
+          xcrun swiftc -parse-as-library Sources/JarvisMusicCommands.swift Tests/MusicCommandSmoke.swift -o /tmp/jarvis-music-tests
+          /tmp/jarvis-music-tests
+
       - name: Build iPhone app (unsigned)
         working-directory: SolosDirectiOS
         run: |
