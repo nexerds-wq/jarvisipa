@@ -54,6 +54,7 @@ struct JarvisHUDHome: View {
     @State private var showSettings = false
     @State private var allowOnlineRecognition = false
     @State private var speakReplies = true
+    @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = false
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let names = ["DASHBOARD","NAVIGATION","CAPTIONS","TRANSLATE","MESSAGES","JARVIS","TIMERS"]
     private let locales: [(String,String)] = [
@@ -119,11 +120,16 @@ struct JarvisHUDHome: View {
             accessory.refresh()
             phone.refreshSensors()
             requestHeartRate()
+            if keepJarvisListening { phone.startListening() }
             selectMode(0)
             restorePinnedMessageIfNeeded()
             consumeShortcutMessage()
         }
         .onOpenURL { url in acceptIncomingMessageURL(url) }
+        .onChange(of:keepJarvisListening) { _, enabled in
+            if enabled { phone.startListening() }
+            else { phone.stopListening() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("SolosJarvisIncomingMessage"))) { _ in
             consumeShortcutMessage()
         }
@@ -407,6 +413,9 @@ struct JarvisHUDHome: View {
             SecureField("Ollama Cloud API key (optional)",text:$ollamaKey).textFieldStyle(.roundedBorder)
             SecureField("Serper Google Search API key (optional)",text:$serperKey).textFieldStyle(.roundedBorder)
             Toggle("Speak Jarvis answers",isOn:$speakReplies)
+            Toggle("Listen for Hey Jarvis when possible",isOn:$keepJarvisListening)
+            Text("Keeps the microphone active when iOS permits. iOS may pause speech in the background, and a force-close stops it. Siri Shortcuts remains the lock-screen fallback.")
+                .font(.caption2).foregroundStyle(.secondary)
             Toggle("Allow online speech recognition",isOn:$allowOnlineRecognition)
             Text("Ollama must run on your computer or reachable server. A local Wi-Fi model works without outside internet, but iPhone-only offline answers use Apple's supported on-device model.")
                 .font(.caption).foregroundStyle(.secondary)
