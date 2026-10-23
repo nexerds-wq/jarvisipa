@@ -115,6 +115,7 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = true
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let names = ["DASHBOARD","NAVIGATION","CAPTIONS","TRANSLATE","MESSAGES","JARVIS","TIMERS"]
+    private let availableHUDModes = [0,5]
     private let locales: [(String,String)] = [
         ("es-ES","Spanish"),("fr-FR","French"),("de-DE","German"),
         ("it-IT","Italian"),("pt-BR","Portuguese"),("ja-JP","Japanese"),
@@ -159,11 +160,11 @@ struct JarvisHUDHome: View {
 
     private var hudNavigationButtons: some View {
         HStack(spacing:12) {
-            Button("◀ BACK") { handsFree.previousMode(force:true) }
+            Button("◀ BACK") { handsFree.setMode(mode == 0 ? 5 : 0,force:true) }
             Spacer()
-            Text("\(mode + 1) / 7").font(.caption.monospaced()).foregroundStyle(.secondary)
+            Text(mode == 0 ? "DASHBOARD" : "JARVIS AI").font(.caption.monospaced()).foregroundStyle(.secondary)
             Spacer()
-            Button("NEXT ▶") { handsFree.nextMode(force:true) }
+            Button("NEXT ▶") { handsFree.setMode(mode == 0 ? 5 : 0,force:true) }
         }
         .buttonStyle(.borderedProminent)
         .tint(.green)
@@ -187,7 +188,7 @@ struct JarvisHUDHome: View {
     private var hudModePicker: some View {
         ScrollView(.horizontal,showsIndicators:false) {
             HStack(spacing:8) {
-                ForEach(0..<names.count,id:\.self) { index in
+                ForEach(availableHUDModes,id:\.self) { index in
                     Button(names[index]) { handsFree.setMode(index,force:true) }
                         .font(.caption.bold())
                         .padding(.horizontal,11).padding(.vertical,9)
@@ -335,9 +336,10 @@ struct JarvisHUDHome: View {
             if mode == 1 { drawHUD(throttled:true) }
         }
         .onChange(of: phone.aiAnswer) { _, text in
-            guard !online, mode == 5 else { return }
+            guard !online else { return }
             musicOnHUD = false
             answer = text
+            if mode != 5 { handsFree.setMode(5,force:true) }
             drawHUD(throttled:true)
         }
         .onChange(of: music.status) { _, status in
@@ -363,7 +365,7 @@ struct JarvisHUDHome: View {
                 lastMessagePageAt = now
                 drawHUD()
             }
-            if mode == 6 {
+            if false && mode == 6 {
                 if let end = timerEnd, now >= end {
                     timerEnd = nil
                     timerStatus = "Timer finished!"
@@ -552,15 +554,9 @@ struct JarvisHUDHome: View {
             section("JARVIS • HUD CHAT") {
                 Text("Talk to the same Jarvis at the top of the app. Its reply appears here and on your glasses when connected.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text(companionBusy ? "Thinking..." : companionReply).font(.body)
-                Button("OPEN VOICE CONVERSATION") {
-                    companionEnabled = true
-                    companionSpeak = true
-                    companionTurnTaking = true
-                    companionQuiet = false
-                    companionConversationUntil = Date().addingTimeInterval(companionFollowUpSeconds)
-                    selectMode(2)
-                }.buttonStyle(.borderedProminent)
+                Text(aiBusy ? "Thinking..." : answer).font(.body)
+                Text("Say Hey Jarvis, then ask a question. The answer appears on your glasses and is spoken aloud.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             section("APPLE MUSIC • VOICE PLAYBACK") {
                 Text("Say: Hey Jarvis, play Blinding Lights by The Weeknd")
@@ -1059,7 +1055,7 @@ struct JarvisHUDHome: View {
     }
 
     private func selectMode(_ value:Int) {
-        guard (0..<7).contains(value) else { return }
+        guard availableHUDModes.contains(value) else { return }
         if hudSleeping {
             hudSleeping = false
             hudQuitRequested = false
@@ -1190,7 +1186,7 @@ struct JarvisHUDHome: View {
                                       wakeAlreadyVerified:Bool = false,
                                       allowMusic:Bool = true,
                                       allowSystem:Bool = true) -> Bool {
-        if let (kind,title,seconds) = JarvisSmartTasks.parse(speech) {
+        if false, let (kind,title,seconds) = JarvisSmartTasks.parse(speech) {
             smartTasks.add(title:title,kind:kind,after:seconds)
             lastVoiceHUDCommand = "PINNED " + kind.uppercased()
             drawHUD()
@@ -1217,13 +1213,8 @@ struct JarvisHUDHome: View {
         guard wakeAlreadyVerified || normalized.contains("hey jarvis") ||
               normalized.contains("oye jarvis") else { return false }
         let targets: [(Int,[String])] = [
-            (2,["captions","caption","subtitles","subtitle","subtitulos"]),
-            (1,["navigation","navigate","directions","navegacion"]),
-            (3,["translation","translate","traducir","traduccion","translator"]),
-            (0,["dashboard","home","inicio"]),
-            (4,["messages","message","mensajes"]),
-            (5,["assistant","jarvis mode"]),
-            (6,["timers","timer","reminders","reminder"])
+            (0,["dashboard","home","inicio","default display"]),
+            (5,["assistant","jarvis mode","ai","answer"])
         ]
         guard let chosen = targets.first(where:{ item in
             item.1.contains(where:{ target in
@@ -1471,7 +1462,7 @@ struct JarvisHUDHome: View {
         case 6:
             text = timerEnd.map { "TIMER\n" + formatRemaining($0) } ?? "TIMER READY"
             renderMode = 5
-        default: text = ""; renderMode = mode
+        default: text = ""; renderMode = 0
         }
         let output = SolosProHUD.image(
             mode:renderMode,clock:phone.clock,date:phone.dateLine,
@@ -1481,8 +1472,7 @@ struct JarvisHUDHome: View {
             senderPhoto:senderPhoto,messagePage:currentMessagePage + 1,pageCount:messagePages.count)
         let companionFrame = Date().timeIntervalSince(companionLastResponse) < 35 &&
             companionStatus == "Companion replied" ? companionOverlay(output) : output
-        let taskFrame = smartTasksOverlay(companionFrame)
-        let tuned = weatherGuardian.overlay(JarvisHUDVision.apply(to:taskFrame))
+        let tuned = weatherGuardian.overlay(JarvisHUDVision.apply(to:companionFrame))
         image = tuned
         // sendHUDImage drops obsolete ordinary frames while busy. No new BLE
         // transport is fabricated if iOS does not expose an accessory session.
@@ -1496,6 +1486,7 @@ struct JarvisHUDHome: View {
         guard !query.isEmpty else { return }
         aiBusy = true
         musicOnHUD = false
+        if mode != 5 { handsFree.setMode(5,force:true) }
         if online {
             let server = ollamaServer, model = ollamaModel, key = ollamaKey, searchKey = serperKey
             Task {
