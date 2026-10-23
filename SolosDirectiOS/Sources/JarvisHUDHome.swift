@@ -76,6 +76,7 @@ struct JarvisHUDHome: View {
     @AppStorage("hudHardwareBrightnessPreference") private var hardwareBrightnessPreference = 2
     @AppStorage("hudVisionActiveEye") private var hudActiveEye = "OD"
     @State private var rightPrescriptionActivated = false
+    @State private var visionDiagnosticActive = false
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
     @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
     @State private var speakReplies = true
@@ -663,6 +664,20 @@ struct JarvisHUDHome: View {
             }
             Text("The filter samples pixels along your actual prescription axis. It is experimental, not optical sphere/cylinder correction; compare OFF versus ON through your glasses.")
                 .font(.caption2).foregroundStyle(.secondary)
+            Text("VERIFY THE GLASSES REALLY RECEIVE A NEW FRAME")
+                .font(.caption.bold()).foregroundStyle(.green)
+            HStack {
+                Button("SHOW HUGE HUD TEST") {
+                    visionDiagnosticActive = true
+                    sendVisionDiagnostic()
+                }.buttonStyle(.borderedProminent)
+                Button("RESTORE NORMAL HUD") {
+                    visionDiagnosticActive = false
+                    drawHUD()
+                }.buttonStyle(.bordered)
+            }
+            Text("The HUD should show giant 'RX TEST' letters instead of the normal dashboard. If only the iPhone preview changes, this is a display transmission problem, not an eyesight filter problem.")
+                .font(.caption2).foregroundStyle(.secondary)
             Button("START VISION CALIBRATION WIZARD") {
                 visionWizardPresented = true
             }
@@ -1044,7 +1059,34 @@ struct JarvisHUDHome: View {
         drawHUD()
     }
 
+    private func sendVisionDiagnostic() {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let test = UIGraphicsImageRenderer(
+            size:CGSize(width:428,height:240),format:format).image { context in
+            UIColor.black.setFill()
+            context.cgContext.fill(CGRect(x:0,y:0,width:428,height:240))
+            UIColor.white.setStroke()
+            context.cgContext.setLineWidth(5)
+            context.cgContext.stroke(CGRect(x:7,y:7,width:414,height:226))
+            ("RX TEST" as NSString).draw(
+                in:CGRect(x:25,y:42,width:382,height:110),
+                withAttributes:[.font:UIFont.systemFont(ofSize:71,weight:.black),
+                                .foregroundColor:UIColor.white])
+            ("RIGHT EYE   15 DEGREES" as NSString).draw(
+                in:CGRect(x:22,y:166,width:400,height:44),
+                withAttributes:[.font:UIFont.systemFont(ofSize:24,weight:.black),
+                                .foregroundColor:UIColor.white])
+        }
+        image = test
+        if !accessory.connectedProtocol.isEmpty {
+            accessory.sendHUDImage(test,priority:true)
+        }
+    }
+
     private func drawHUD(throttled:Bool = false) {
+        if visionDiagnosticActive { return }
         if hudSleeping || visionWizardPresented { return }
         if throttled && Date().timeIntervalSince(lastFrameAt) < (mode == 2 ? 0.25 : 0.6) { return }
         lastFrameAt = Date()
