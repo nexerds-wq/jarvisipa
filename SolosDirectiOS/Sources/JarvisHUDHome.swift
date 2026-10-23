@@ -12,6 +12,7 @@ struct JarvisHUDHome: View {
     @ObservedObject private var accessory: SolosClassicManager
     @StateObject private var handsFree = SolosHandsFreeEngine()
     @StateObject private var captions = OfflineCaptionService()
+    @StateObject private var navigation = SolosNavigationEngine()
     private let health = HKHealthStore()
 
     @State private var mode = 0
@@ -130,6 +131,9 @@ struct JarvisHUDHome: View {
             if mode == 2 { drawHUD() }
             if mode == 3 { queueTranslation(text) }
         }
+        .onChange(of: navigation.instruction) { _, _ in
+            if mode == 1 { drawHUD(throttled:true) }
+        }
         .onChange(of: phone.aiAnswer) { _, text in
             guard !online, mode == 5 else { return }
             answer = text
@@ -231,9 +235,15 @@ struct JarvisHUDHome: View {
             }
         case 1:
             section("NAVIGATION") {
-                Text("Navigation directions need a route and location permission. Use the original full navigation panel below.")
-                    .font(.subheadline)
-                Button("Send GPS and speed") { phone.refreshSensors(); drawHUD() }.buttonStyle(.borderedProminent)
+                TextField("Where to?",text:$navigation.address).textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("Start route") {
+                        Task { await navigation.start(); drawHUD() }
+                    }
+                    Button("Stop route") { navigation.stop(); drawHUD() }
+                }.buttonStyle(.borderedProminent)
+                Text(navigation.instruction).font(.headline)
+                Text(navigation.status).font(.caption).foregroundStyle(.secondary)
                 Text(phone.coordinates).font(.caption.monospaced()).foregroundStyle(.secondary)
             }
         case 2:
@@ -248,7 +258,7 @@ struct JarvisHUDHome: View {
         case 3:
             section("TRANSLATE TO ENGLISH") {
                 Picker("Spoken language",selection:$language) {
-                    ForEach(locales,id:\.0) { item in Text(item.1).tag(item.0) }
+                    ForEach(locales.indices,id:\.self) { index in Text(locales[index].1).tag(locales[index].0) }
                 }.onChange(of:language) { _, _ in startCaptioning() }
                 Text(translationStatus).font(.caption).foregroundStyle(.secondary)
                 Text("Heard: " + heard).font(.caption)
@@ -424,6 +434,9 @@ struct JarvisHUDHome: View {
         let text: String
         let renderMode: Int
         switch mode {
+        case 1:
+            text = navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining
+            renderMode = 1
         case 2: text = heard; renderMode = 2
         case 3: text = translated; renderMode = 3
         case 4: text = message; renderMode = 4
