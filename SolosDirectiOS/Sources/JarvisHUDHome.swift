@@ -72,6 +72,10 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisCompanionMemoryEnabled") private var companionMemoryEnabled = false
     @AppStorage("jarvisCompanionNotes") private var companionNotes = ""
     @AppStorage("jarvisCompanionTurnTaking") private var companionTurnTaking = false
+    @AppStorage("jarvisCompanionFollowUpSeconds") private var companionFollowUpSeconds = 35.0
+    @State private var companionConversationUntil = Date.distantPast
+    @State private var companionLastTranscript = ""
+    @State private var companionQuiet = false
     @State private var companionHistory = [[String:String]]()
     @State private var companionNoteDraft = ""
     @State private var companionInput = ""
@@ -755,6 +759,21 @@ struct JarvisHUDHome: View {
             Toggle("Remember conversation during this app session",isOn:$companionMemoryEnabled)
             Toggle("Voice follow-ups addressed to Jarvis in captions",isOn:$companionTurnTaking)
                 .disabled(!companionEnabled)
+            HStack {
+                Button("START CONVERSATION") {
+                    companionQuiet = false
+                    companionConversationUntil = Date().addingTimeInterval(companionFollowUpSeconds)
+                    selectMode(2)
+                    companionStatus = "Conversation window open • captions listening"
+                }
+                Button("QUIET / STOP") {
+                    companionQuiet = true
+                    companionConversationUntil = .distantPast
+                    companionStatus = "Companion quiet"
+                }
+            }.buttonStyle(.bordered)
+            Text("When conversation is open, follow-up speech is accepted for 35 seconds after each turn. Saying 'Jarvis, quiet' closes it. This works through active captions, not while another app owns the mic.")
+                .font(.caption2).foregroundStyle(.secondary)
             TextField("A preference or fact Jarvis should remember",text:$companionNoteDraft,axis:.vertical)
                 .lineLimit(1...3).textFieldStyle(.roundedBorder)
             Button("SAVE PERSONAL NOTE") {
@@ -796,20 +815,47 @@ struct JarvisHUDHome: View {
     }
 
     private func considerCompanionTranscript(_ transcript:String) {
-        guard companionEnabled, !companionBusy,
-              Date().timeIntervalSince(companionLastResponse) > 180,
-              !musicOnHUD, mode == 2 else { return }
-        let lower = transcript.lowercased()
-        if companionTurnTaking && lower.hasPrefix("jarvis ") && lower.count > 12 {
-            talkToCompanion(String(transcript.dropFirst(7)))
+        guard companionEnabled, !companionBusy, !musicOnHUD, mode == 2 else { return }
+        let phrase = transcript.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard phrase.count >= 3, phrase != companionLastTranscript else { return }
+        let lower = phrase.lowercased()
+        if ["jarvis quiet","jarvis stop talking","jarvis be quiet","jarvis silence"].contains(where:lower.contains) {
+            companionQuiet = true
+            companionConversationUntil = .distantPast
+            companionStatus = "Companion quiet"
+            companionLastTranscript = phrase
             return
         }
-        guard companionAutoSupport else { return }
+        if lower.contains("jarvis let's talk") || lower.contains("jarvis lets talk") {
+            companionQuiet = false
+            companionConversationUntil = Date().addingTimeInterval(companionFollowUpSeconds)
+            companionStatus = "Conversation window open"
+            companionLastTranscript = phrase
+            return
+        }
+        guard !companionQuiet else { return }
+        if companionTurnTaking {
+            let addressed = lower.hasPrefix("jarvis ") || lower.hasPrefix("hey jarvis ")
+            let withinWindow = Date() < companionConversationUntil
+            if addressed || withinWindow {
+                let message:String
+                if lower.hasPrefix("hey jarvis ") { message = String(phrase.dropFirst(11)) }
+                else if lower.hasPrefix("jarvis ") { message = String(phrase.dropFirst(7)) }
+                else { message = phrase }
+                guard message.count >= 4 else { return }
+                companionLastTranscript = phrase
+                companionConversationUntil = Date().addingTimeInterval(companionFollowUpSeconds)
+                talkToCompanion(message)
+                return
+            }
+        }
+        guard companionAutoSupport, Date().timeIntervalSince(companionLastResponse) > 180 else { return }
         let signals = ["i'm frustrated","i am frustrated","i'm sad","i am sad",
                        "i feel alone","i'm overwhelmed","i am overwhelmed",
                        "i need someone to talk to","i'm upset","i am upset"]
         guard signals.contains(where:lower.contains) else { return }
-        talkToCompanion("I said: " + String(transcript.prefix(350)) +
+        companionLastTranscript = phrase
+        talkToCompanion("I said: " + String(phrase.prefix(350)) +
                         ". Offer one brief, gentle, non-assumptive response.")
     }
 
