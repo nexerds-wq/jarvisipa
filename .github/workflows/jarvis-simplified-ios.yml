@@ -1,0 +1,81 @@
+name: Build Simplified Jarvis iPhone IPA
+on:
+  push:
+    branches:
+      - jarvis-simplified-ios-20261022
+    paths:
+      - "jarvis_build/**"
+      - ".github/workflows/jarvis-simplified-ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - name: Checkout Jarvis patch
+        uses: actions/checkout@v4
+        with:
+          path: patchrepo
+
+      - name: Checkout original Solos project
+        uses: actions/checkout@v4
+        with:
+          repository: StudentBroken/solos-hud
+          ref: d7d7c5b9fc16c1535d9bb20d8b56d5260db3144d
+          path: appsource
+
+      - name: Apply simplified iOS source patch
+        run: |
+          python3 - <<'PY'
+          import base64, io, tarfile, pathlib, re
+          encoded = pathlib.Path("patchrepo/jarvis_build/jarvis_patch.tar.xz.b64").read_text().strip()
+          payload = base64.b64decode(encoded, validate=True)
+          with tarfile.open(fileobj=io.BytesIO(payload), mode="r:xz") as archive:
+              archive.extractall(path="appsource")
+          pbx = pathlib.Path("appsource/solos_hud/ios/Runner.xcodeproj/project.pbxproj")
+          project = pbx.read_text()
+          project = re.sub(r"IPHONEOS_DEPLOYMENT_TARGET = [^;]+;", "IPHONEOS_DEPLOYMENT_TARGET = 16.4;", project)
+          project = re.sub(r"(?m)^(\s*)(PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)", r"\1CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n\1\2", project)
+          pbx.write_text(project)
+          print("Applied Jarvis source patch and configured iOS 16.4 + HealthKit entitlement")
+          PY
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Toolchain versions
+        run: |
+          flutter --version
+          xcodebuild -version
+
+      - name: Install dependencies
+        working-directory: appsource/solos_hud
+        run: flutter pub get
+
+      - name: Compile iPhone app
+        working-directory: appsource/solos_hud
+        run: flutter build ios --release --no-codesign
+
+      - name: Create unsigned IPA
+        run: |
+          set -euo pipefail
+          test -d appsource/solos_hud/build/ios/iphoneos/Runner.app
+          mkdir -p ipa/Payload
+          ditto appsource/solos_hud/build/ios/iphoneos/Runner.app ipa/Payload/Runner.app
+          (cd ipa && zip -qry ../Jarvis-iPhone-UNSIGNED.ipa Payload)
+          unzip -t Jarvis-iPhone-UNSIGNED.ipa >/dev/null
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-iPhone-UNSIGNED-IPA
+          path: Jarvis-iPhone-UNSIGNED.ipa
+          if-no-files-found: error
+          retention-days: 30
