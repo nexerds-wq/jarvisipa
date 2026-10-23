@@ -41,6 +41,18 @@ jobs:
           project = re.sub(r"IPHONEOS_DEPLOYMENT_TARGET = [^;]+;", "IPHONEOS_DEPLOYMENT_TARGET = 16.4;", project)
           project = re.sub(r"(?m)^(\s*)(PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)", r"\1CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n\1\2", project)
           pbx.write_text(project)
+          # Compatibility fixes for the current Flutter / speech_to_text API.
+          dart = pathlib.Path("appsource/solos_hud/lib/jarvis/jarvis_app.dart")
+          body = dart.read_text()
+          body = body.replace(
+              "        listenOptions: SpeechListenOptions(\\n          localeId: locale, listenFor:",
+              "        localeId: locale,\\n        listenOptions: SpeechListenOptions(\\n          listenFor:"
+          )
+          body = body.replace(
+              "icon: const Icon(Icons.file_open), child: const Text('Import offline GGUF model')",
+              "icon: const Icon(Icons.file_open), label: const Text('Import offline GGUF model')"
+          )
+          dart.write_text(body)
           print("Applied Jarvis source patch and configured iOS 16.4 + HealthKit entitlement")
           PY
 
