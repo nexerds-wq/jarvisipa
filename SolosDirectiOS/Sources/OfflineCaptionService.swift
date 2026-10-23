@@ -17,6 +17,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     @Published var recognizedLanguage = "English"
     @Published var audioBuffers = 0
     @Published var recognizerMode = "Not started"
+    @Published var microphoneRoute = "No microphone selected"
 
     var onSubtitle: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
@@ -29,6 +30,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var desired = false
     private var starting = false
     private var onDeviceOnly = true
+    private var preferPhoneMicrophone = true
     private var lastDisplay = Date.distantPast
     private var lastCaptionDelivered = ""
     private var generation = 0
@@ -85,7 +87,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
 
     /// Setting allowOnlineRecognition true allows Speech to use Apple's network
     /// recognition when on-device recognition is not supported for the language.
-    func start(locale:String, name:String, allowOnlineRecognition:Bool = false) {
+    func start(locale:String, name:String, allowOnlineRecognition:Bool = false, preferPhoneMicrophone:Bool = true) {
         stop()
         audioBuffers = 0
         buffersCaptured = 0
@@ -99,6 +101,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         localeCode = locale
         recognizedLanguage = name
         onDeviceOnly = !allowOnlineRecognition
+        self.preferPhoneMicrophone = preferPhoneMicrophone
         status = "Requesting microphone + Speech permissions for \(name)..."
         let expected = generation
         SFSpeechRecognizer.requestAuthorization { [weak self] auth in
@@ -155,14 +158,30 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         let captureRequest = SFSpeechAudioBufferRecognitionRequest()
         captureRequest.shouldReportPartialResults = true
         captureRequest.requiresOnDeviceRecognition = forceOffline
+        captureRequest.taskHint = .dictation
+        captureRequest.addsPunctuation = true
+        captureRequest.contextualStrings = ["Hey Jarvis", "Hola", "Oye Jarvis", "navegación", "traducción"]
         request = captureRequest
 
         do {
             let audio = AVAudioSession.sharedInstance()
             lastAudioConfiguration = Date()
-            try audio.setCategory(.playAndRecord,mode:.default,
-                                  options:[.defaultToSpeaker,.allowBluetooth])
+            if preferPhoneMicrophone {
+                // Bluetooth headset HFP may have low far-field sensitivity.
+                // Use the iPhone's microphones without echo processing for a
+                // person speaking across the room.
+                try audio.setCategory(.record,mode:.measurement,options:[])
+            } else {
+                try audio.setCategory(.playAndRecord,mode:.default,
+                                      options:[.defaultToSpeaker,.allowBluetooth])
+            }
             try audio.setActive(true)
+            if preferPhoneMicrophone,
+               let builtIn = audio.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                try audio.setPreferredInput(builtIn)
+            }
+            microphoneRoute = audio.currentRoute.inputs.map(\.portName).joined(separator:", ")
+            if microphoneRoute.isEmpty { microphoneRoute = "No audio input selected" }
             let input = engine.inputNode
             let format = input.outputFormat(forBus:0)
             guard format.sampleRate > 0, format.channelCount > 0 else {
@@ -193,7 +212,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
             isListening = true
             starting = false
             failureCount = 0
-            status = "\(recognizerMode) • MIC ACTIVE • \(recognizedLanguage)"
+            status = "\(recognizerMode) • \(recognizedLanguage) • \(microphoneRoute)"
             let current = generation
             // Recognition sessions can expire. Rotate proactively so the
             // listener keeps working while the HUD remains selected.
@@ -271,7 +290,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         restartTask?.cancel()
         cleanup()
         failureCount += 1
-        let delay = min(5.0,0.9 + Double(failureCount) * 0.45)
+        let delay = expectedRotation ? 0.35 : min(5.0,0.9 + Double(failureCount) * 0.45)
         status = "\(reason). Reconnecting mic..."
         let expected = generation
         let job = DispatchWorkItem { [weak self] in

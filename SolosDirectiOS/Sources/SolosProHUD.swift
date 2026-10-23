@@ -100,11 +100,11 @@ enum SolosProHUD {
                 draw("LEFT " + left,x:211,y:188,size:17,color:pale,bold:true,maxWidth:195)
             case 2:
                 header("LIVE CAPTIONS",detail:detail)
-                bigBody(message.isEmpty ? "LISTENING FOR SPEECH..." : String(message.suffix(250)),
+                bigBody(message.isEmpty ? "LISTENING FOR SPEECH..." : fittingSpeech(message),
                         top:47, height:156, preferred:31, minimum:21)
             case 3:
                 header("ENGLISH TRANSLATION",detail:detail)
-                bigBody(message.isEmpty ? "LISTENING / TRANSLATING..." : String(message.suffix(250)),
+                bigBody(message.isEmpty ? "LISTENING / TRANSLATING..." : fittingSpeech(message),
                         top:47, height:156, preferred:31, minimum:21)
             case 4:
                 header("MESSAGE",detail:"")
@@ -144,6 +144,28 @@ enum SolosProHUD {
             }
         }
     }
+    // Fit the newest *whole words* on the 428x240 display. Drawing a long
+    // raw transcript in a fixed rectangle silently clipped its last words.
+    static func fittingSpeech(_ text:String) -> String {
+        let words = text.split(whereSeparator:{$0.isWhitespace}).map(String.init)
+        guard !words.isEmpty else { return "" }
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byWordWrapping
+        style.lineSpacing = 3
+        let font = UIFont.systemFont(ofSize:22,weight:.bold)
+        var result = ""
+        for word in words.reversed() {
+            let proposal = result.isEmpty ? word : word + " " + result
+            let height = (proposal as NSString).boundingRect(
+                with:CGSize(width:394,height:CGFloat.greatestFiniteMagnitude),
+                options:[.usesLineFragmentOrigin,.usesFontLeading],
+                attributes:[.font:font,.paragraphStyle:style],context:nil).height
+            if height > 152 && !result.isEmpty { break }
+            result = proposal
+        }
+        return result
+    }
+
     static func bigBody(_ text: String, top: CGFloat, height: CGFloat,
                         preferred: CGFloat, minimum: CGFloat) {
         let paragraph = NSMutableParagraphStyle()

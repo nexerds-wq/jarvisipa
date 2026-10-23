@@ -12,6 +12,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     @Published var aiStatus = "Ready to use on-device JARVIS"
     @Published var aiAnswer = "Ask JARVIS a question or start listening."
     @Published var transcribed = ""
+    var onHUDVoiceCommand: ((String) -> Bool)?
     @Published var voiceStatus = "Not listening"
     @Published var listening = false
     @Published var discoveredBLE = [String]()
@@ -726,6 +727,13 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         let rearm = continuousWakeWanted
         stopListening()
         continuousWakeWanted = rearm
+        // Mode requests are processed locally without waking an AI model.
+        // The HUD controller stops/restarts the correct microphone owner.
+        if onHUDVoiceCommand?(question) == true {
+            voiceStatus = "Jarvis switched the HUD"
+            if rearm && !hudCaptionsActive { scheduleWakeRearm(after:0.3) }
+            return
+        }
         if !asking { ask(question) }
         else { voiceStatus = "Finishing previous answer; say Hey Jarvis again" }
     }

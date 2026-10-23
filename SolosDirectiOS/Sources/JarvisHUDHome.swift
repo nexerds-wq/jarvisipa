@@ -19,6 +19,10 @@ struct JarvisHUDHome: View {
     @State private var mode = 0
     @State private var image: UIImage?
     @State private var lastFrameAt = Date.distantPast
+    @State private var captionFlushWork: DispatchWorkItem?
+    @State private var translationDebounceWork: DispatchWorkItem?
+    @State private var translationSessionReady = false
+    @State private var lastVoiceHUDCommand = ""
     @State private var heard = ""
     @State private var translated = ""
     @State private var translationConfiguration: TranslationSession.Configuration?
@@ -52,7 +56,8 @@ struct JarvisHUDHome: View {
     @State private var aiBusy = false
     @State private var showConnection = false
     @State private var showSettings = false
-    @State private var allowOnlineRecognition = false
+    @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
+    @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
     @State private var speakReplies = true
     @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = false
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -115,6 +120,7 @@ struct JarvisHUDHome: View {
         .preferredColorScheme(.dark)
         .onAppear {
             handsFree.onModeChange = { newMode in selectMode(newMode) }
+            phone.onHUDVoiceCommand = { spoken in routeVoiceHUDCommand(spoken) }
             accessory.onAccessoryPacket = { data in handsFree.input(data) }
             handsFree.enableMediaButtons()
             accessory.refresh()
@@ -140,6 +146,9 @@ struct JarvisHUDHome: View {
             }
         }
         .onDisappear {
+            phone.onHUDVoiceCommand = nil
+            captionFlushWork?.cancel()
+            translationDebounceWork?.cancel()
             captions.stop()
             translationContinuation?.finish()
             translationContinuation = nil
@@ -147,15 +156,33 @@ struct JarvisHUDHome: View {
         }
         .onChange(of: captions.partial) { _, text in
             guard mode == 2 || mode == 3, !text.isEmpty else { return }
+            if routeVoiceHUDCommand(text) { return }
             heard = text
-            if mode == 2 { drawHUD(throttled:true) }
-            else { queueTranslation(text) }
+            if mode == 2 {
+                // The first partial is quick; a trailing frame MUST still
+                // deliver "hey how are you" after "hey" was sent earlier.
+                drawHUD(throttled:true)
+                scheduleCaptionFlush(text)
+            } else {
+                queueTranslation(text)
+            }
         }
         .onChange(of: captions.latestFinal) { _, text in
-            guard !text.isEmpty else { return }
+            guard mode == 2 || mode == 3, !text.isEmpty else { return }
+            if routeVoiceHUDCommand(text) { return }
             heard = text
-            if mode == 2 { drawHUD() }
-            if mode == 3 { queueTranslation(text) }
+            if mode == 2 {
+                captionFlushWork?.cancel()
+                drawHUD()
+            } else {
+                queueTranslation(text, final:true)
+            }
+        }
+        .onChange(of: allowOnlineRecognition) { _, _ in
+            if mode == 2 || mode == 3 { startCaptioning() }
+        }
+        .onChange(of: preferPhoneMicrophone) { _, _ in
+            if mode == 2 || mode == 3 { startCaptioning() }
         }
         .onChange(of: navigation.instruction) { _, _ in
             if mode == 1 { drawHUD(throttled:true) }
@@ -186,26 +213,46 @@ struct JarvisHUDHome: View {
             await MainActor.run {
                 translationContinuation?.finish()
                 translationContinuation = channel.continuation
-                if !translationPending.isEmpty { channel.continuation.yield(translationPending) }
+                translationSessionReady = false
+                translationStatus = "Preparing Apple Spanish → English translation models..."
             }
             do {
                 try await session.prepareTranslation()
-                await MainActor.run { translationStatus = "Translator ready" }
+                await MainActor.run {
+                    guard mode == 3 else { return }
+                    translationSessionReady = true
+                    translationStatus = "Translator ready • listening for full Spanish phrases"
+                    // If Speech heard someone while the language pack loaded,
+                    // immediately translate the most recent sentence.
+                    if !translationPending.isEmpty {
+                        channel.continuation.yield(translationPending)
+                    }
+                }
                 for await original in channel.stream {
                     guard !Task.isCancelled else { break }
                     do {
                         let result = try await session.translate(original)
                         await MainActor.run {
                             guard mode == 3, original == translationPending else { return }
-                            translated = result.targetText
+                            let english = result.targetText.trimmingCharacters(in:.whitespacesAndNewlines)
+                            guard !english.isEmpty else { return }
+                            translated = english
+                            translationStatus = "Translated • \(language) → English"
                             drawHUD()
                         }
                     } catch {
-                        await MainActor.run { translationStatus = error.localizedDescription }
+                        await MainActor.run {
+                            guard mode == 3 else { return }
+                            translationStatus = "Translation failed: " + error.localizedDescription
+                        }
                     }
                 }
             } catch {
-                await MainActor.run { translationStatus = "Download language models first: " + error.localizedDescription }
+                await MainActor.run {
+                    guard mode == 3 else { return }
+                    translationSessionReady = false
+                    translationStatus = "Download Spanish and English in Apple Translate, then tap Retry: " + error.localizedDescription
+                }
             }
         }
     }
@@ -215,7 +262,8 @@ struct JarvisHUDHome: View {
             Image(systemName:"eyeglasses").font(.title2)
             VStack(alignment:.leading,spacing:2) {
                 Text("SOLOS  /  JARVIS").font(.headline.monospaced()).foregroundStyle(.green)
-                Text("HUD FIRST • NO EFFECTS").font(.caption2).foregroundStyle(.secondary)
+                Text(lastVoiceHUDCommand.isEmpty ? "HUD FIRST • NO EFFECTS" : lastVoiceHUDCommand)
+                    .font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
             Circle().fill(accessory.connectedProtocol.isEmpty ? .orange : .green).frame(width:11,height:11)
@@ -280,6 +328,7 @@ struct JarvisHUDHome: View {
         case 2:
             section("LIVE CAPTIONS") {
                 Text(captions.status).font(.caption).foregroundStyle(.secondary)
+                Text("Mic: " + captions.microphoneRoute).font(.caption2).foregroundStyle(.secondary)
                 Text(heard.isEmpty ? "Listening..." : heard).font(.title3)
                 HStack {
                     Button("Restart captions") { startCaptioning() }
@@ -291,10 +340,19 @@ struct JarvisHUDHome: View {
                 Picker("Spoken language",selection:$language) {
                     ForEach(locales.indices,id:\.self) { index in Text(locales[index].1).tag(locales[index].0) }
                 }.onChange(of:language) { _, _ in startCaptioning() }
-                Text(translationStatus).font(.caption).foregroundStyle(.secondary)
-                Text("Heard: " + heard).font(.caption)
-                Text(translated.isEmpty ? "Translation appears here" : translated).font(.title3.bold())
-                Button("Restart translator") { startCaptioning() }.buttonStyle(.bordered)
+                Text(captions.status).font(.caption2).foregroundStyle(.secondary)
+                Text("Mic: " + captions.microphoneRoute).font(.caption2).foregroundStyle(.secondary)
+                Text(translationStatus).font(.caption).foregroundStyle(.orange)
+                Text("Spanish heard: " + (heard.isEmpty ? "Waiting for speech..." : heard)).font(.caption)
+                Text(translated.isEmpty ? "English translation will appear here" : translated).font(.title3.bold())
+                Toggle("Improve Spanish speech using online recognition",isOn:$allowOnlineRecognition)
+                    .font(.caption)
+                Toggle("Use iPhone microphone for people farther away",isOn:$preferPhoneMicrophone)
+                    .font(.caption)
+                Button("Retry / download translation models") {
+                    startCaptioning()
+                    translationConfiguration?.invalidate()
+                }.buttonStyle(.bordered)
             }
         case 4:
             section("PIN A MESSAGE TO HUD") {
@@ -417,6 +475,9 @@ struct JarvisHUDHome: View {
             Text("Keeps the microphone active when iOS permits. iOS may pause speech in the background, and a force-close stops it. Siri Shortcuts remains the lock-screen fallback.")
                 .font(.caption2).foregroundStyle(.secondary)
             Toggle("Allow online speech recognition",isOn:$allowOnlineRecognition)
+            Toggle("Use iPhone microphone instead of Bluetooth headset mic",isOn:$preferPhoneMicrophone)
+            Text("For a speaker 8–10 feet away, point the iPhone microphone toward them and reduce room noise. No software setting guarantees speech recognition at that distance.")
+                .font(.caption2).foregroundStyle(.secondary)
             Text("Ollama must run on your computer or reachable server. A local Wi-Fi model works without outside internet, but iPhone-only offline answers use Apple's supported on-device model.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -437,6 +498,9 @@ struct JarvisHUDHome: View {
             UserDefaults.standard.set(false, forKey:"jarvisMessagePinned")
         }
         mode = value
+        captionFlushWork?.cancel()
+        translationDebounceWork?.cancel()
+        translationSessionReady = false
         captions.stop()
         translationContinuation?.finish()
         translationContinuation = nil
@@ -450,8 +514,13 @@ struct JarvisHUDHome: View {
     private func startCaptioning() {
         guard mode == 2 || mode == 3 else { return }
         captions.stop()
+        captionFlushWork?.cancel()
+        translationDebounceWork?.cancel()
         heard = ""
         translated = ""
+        translationPending = ""
+        translationSessionReady = false
+        if mode == 3 { translationStatus = "Starting speech recognition and translation..." }
         let locale = mode == 2 ? "en-US" : language
         if mode == 3 && !language.hasPrefix("en") {
             let source = language.components(separatedBy:"-").first ?? "es"
@@ -464,25 +533,77 @@ struct JarvisHUDHome: View {
         }
         captions.start(locale:locale,
                        name:locales.first(where:{$0.0 == locale})?.1 ?? "English",
-                       allowOnlineRecognition:allowOnlineRecognition)
+                       allowOnlineRecognition:allowOnlineRecognition,
+                       preferPhoneMicrophone:preferPhoneMicrophone)
     }
 
-    private func queueTranslation(_ text:String) {
+    private func scheduleCaptionFlush(_ text:String) {
+        captionFlushWork?.cancel()
+        let job = DispatchWorkItem {
+            guard mode == 2, heard == text else { return }
+            drawHUD() // Forced trailing frame after streaming speech settles.
+        }
+        captionFlushWork = job
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.38,execute:job)
+    }
+
+    private func queueTranslation(_ text:String, final:Bool = false) {
         guard mode == 3 else { return }
+        let phrase = text.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !phrase.isEmpty else { return }
         if language.hasPrefix("en") {
-            translated = text
-            drawHUD(throttled:true)
+            translated = phrase
+            drawHUD()
             return
         }
-        guard text != translationPending else { return }
-        translationPending = text
-        translationContinuation?.yield(text)
+        translationDebounceWork?.cancel()
+        // Stabilize fluent speech first; translating every 100-ms partial
+        // kept invalidating the result before it could ever reach the HUD.
+        let job = DispatchWorkItem {
+            guard mode == 3 else { return }
+            guard translationPending != phrase else { return }
+            translationPending = phrase
+            translationStatus = translationSessionReady ? "Translating speech..." :
+                "Heard Spanish; preparing language models..."
+            translationContinuation?.yield(phrase)
+            if translated.isEmpty { drawHUD() }
+        }
+        translationDebounceWork = job
+        DispatchQueue.main.asyncAfter(deadline:.now()+(final ? 0.08 : 0.50),execute:job)
+    }
+
+    @discardableResult
+    private func routeVoiceHUDCommand(_ speech:String) -> Bool {
+        let normalized = speech.folding(options:[.caseInsensitive,.diacriticInsensitive],
+                                        locale:Locale(identifier:"en_US")).lowercased()
+        guard normalized.contains("hey jarvis") ||
+              normalized.contains("oye jarvis") else { return false }
+        let targets: [(Int,[String])] = [
+            (2,["captions","caption","subtitles","subtitle","subtitulos"]),
+            (1,["navigation","navigate","directions","navegacion"]),
+            (3,["translation","translate","traducir","traduccion","translator"]),
+            (0,["dashboard","home","inicio"]),
+            (4,["messages","message","mensajes"]),
+            (5,["assistant","jarvis mode"]),
+            (6,["timers","timer","reminders","reminder"])
+        ]
+        guard let chosen = targets.first(where:{ item in
+            item.1.contains(where:{ target in
+                normalized.range(of:target,options:.caseInsensitive) != nil
+            })
+        }) else { return false }
+        // Avoid extra audio-engine restarts when an existing recognizer
+        // sends the same intermediate phrase more than once.
+        if mode != chosen.0 { handsFree.setMode(chosen.0,force:true) }
+        lastVoiceHUDCommand = "VOICE → " + names[chosen.0]
+        return true
     }
 
     private func drawHUD(throttled:Bool = false) {
-        if throttled && Date().timeIntervalSince(lastFrameAt) < 0.8 { return }
+        if throttled && Date().timeIntervalSince(lastFrameAt) < (mode == 2 ? 0.25 : 0.6) { return }
         lastFrameAt = Date()
-        let detail = mode == 0 ? "HEART " + heartRate + " BPM" : "JARVIS • " + names[mode]
+        let detail = mode == 0 ? "HEART " + heartRate + " BPM" :
+            (mode == 3 && translated.isEmpty ? "SPANISH HEARD • TRANSLATING" : "JARVIS • " + names[mode])
         let text: String
         let renderMode: Int
         switch mode {
@@ -490,7 +611,7 @@ struct JarvisHUDHome: View {
             text = navigation.nextTurn + "|" + navigation.instruction + "|" + navigation.eta + "|" + navigation.remaining
             renderMode = 1
         case 2: text = heard; renderMode = 2
-        case 3: text = translated; renderMode = 3
+        case 3: text = translated.isEmpty ? heard : translated; renderMode = 3
         case 4: text = messagePages[min(currentMessagePage, messagePages.count - 1)]; renderMode = 4
         case 5: text = answer; renderMode = 5
         case 6:
