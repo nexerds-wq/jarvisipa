@@ -69,7 +69,7 @@ struct JarvisVisionCalibrationWizard: View {
             Text("RECEIPT: \\(JarvisPrescription.forEye(eye).summary)")
                 .font(.caption.monospaced())
                 .foregroundStyle(.yellow)
-            Text("Principal meridians: \\(JarvisPrescription.forEye(eye).axis)° / \\(JarvisPrescription.forEye(eye).perpendicularMeridian)°. Spherical equivalent: \\(String(format:"%.2f",JarvisPrescription.forEye(eye).sphericalEquivalent)) D. These describe optical refraction, not software filter strengths.")
+            Text("Principal meridians: \\(JarvisPrescription.forEye(eye).axis)° / \\(JarvisPrescription.forEye(eye).perpendicularMeridian)°. Spherical equivalent: \\(JarvisPrescription.forEye(eye).sphericalEquivalent) D. These describe optical refraction, not software filter strengths.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Text("The display cannot focus light differently for each eye. Profiles are alternatives for the eye actually viewing the HUD, not two simultaneous displays.")
