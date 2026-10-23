@@ -37,6 +37,10 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     private var queuedLatestFrame: Data?
     private var nextByte = 0
     private var drainScheduled = false
+    // CPU-heavy RGB565 RLE compression must never stall microphone, SwiftUI
+    // or text callbacks on the iPhone main run loop.
+    private let imageEncoderQueue = DispatchQueue(label:"solos.fast.hud.encoder",qos:.userInitiated)
+    private var latestHUDRequestID = 0
     @Published private(set) var hudFramesSent = 0
 
     var declaredProtocols: [String] {
@@ -119,6 +123,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         session = nil
         connectedName = ""
         connectedProtocol = ""
+        latestHUDRequestID += 1
         pendingFrame = Data()
         queuedPriorityFrame = nil
         queuedLatestFrame = nil
@@ -152,11 +157,22 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             status = "NO GLASSES HUD CONNECTION. Connect an exposed Solos ExternalAccessory session."
             return
         }
-        guard let packet = SolosDisplayPacket.imagePacket(image: image) else {
-            status = "Could not encode OLED image."
-            return
+        latestHUDRequestID += 1
+        let requestID = latestHUDRequestID
+        // Serial worker keeps peak memory bounded. Only the latest fully
+        // encoded frame gets enqueued; obsolete partial captions are dropped.
+        imageEncoderQueue.async { [weak self] in
+            let packet = SolosDisplayPacket.imagePacket(image:image)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.latestHUDRequestID == requestID,
+                      self.session != nil else { return }
+                guard let packet else {
+                    self.status = "Could not encode OLED image."
+                    return
+                }
+                self.enqueuePacket(packet,priority:priority)
+            }
         }
-        enqueuePacket(packet, priority: priority)
     }
 
     // A display frame must finish before another one begins. Replacing a partially
