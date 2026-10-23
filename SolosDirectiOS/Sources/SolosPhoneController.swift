@@ -410,7 +410,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         do {
             let audio = AVAudioSession.sharedInstance()
             if bargeIn {
-                try audio.setCategory(.playAndRecord, mode:.voiceChat,
+                try audio.setCategory(.playAndRecord, mode:.default,
                                       options:[.mixWithOthers,.allowBluetoothA2DP,.defaultToSpeaker])
             } else {
                 try audio.setCategory(.playback, mode:.spokenAudio,

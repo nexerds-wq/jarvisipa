@@ -1138,11 +1138,17 @@ struct JarvisHUDHome: View {
         }
         if allowSystem, let action = JarvisSystemVoice.parse(
             speech,wakeAlreadyVerified:wakeAlreadyVerified) {
+            // Only explicit music requests can stop music.
+            if case .stopMusic = action {
+                let words = speech.lowercased()
+                guard ["stop music","pause music","stop the song","pause the song"].contains(where:words.contains) else { return false }
+            }
             handleSystemCommand(action)
             return true
         }
         if allowMusic, let command = JarvisMusicCommand.parse(
             speech,wakeAlreadyVerified:wakeAlreadyVerified) {
+            if case .pause = command { return false } // Never pause a song from ambient or wake-word speech.
             handleMusicCommand(command)
             return true
         }
@@ -1190,8 +1196,7 @@ struct JarvisHUDHome: View {
     private func pauseAllFeatures(cancelTimer:Bool) {
         pauseCaptionsAndTranslation()
         navigation.stop()
-        music.pause()
-        phone.setMusicPlaybackActive(false)
+        // Stop Jarvis features without changing Apple Music playback.
         accessory.interruptSpeech()
         if cancelTimer {
             timerEnd = nil
@@ -1281,9 +1286,8 @@ struct JarvisHUDHome: View {
             accessory.interruptSpeech()
             setCommandStatus("JARVIS VOICE STOPPED")
         case .stopMusic:
-            music.pause()
-            phone.setMusicPlaybackActive(false)
-            setCommandStatus("APPLE MUSIC PAUSED")
+            // Deliberately leave Apple Music alone, including voice false positives.
+            setCommandStatus("MUSIC PROTECTED • USE MUSIC APP TO PAUSE")
         case .stopNavigation:
             navigation.stop()
             setCommandStatus("NAVIGATION STOPPED")
@@ -1309,14 +1313,8 @@ struct JarvisHUDHome: View {
                     pauseCaptionsAndTranslation()
                     setCommandStatus(mode == 2 ? "CAPTIONS STOPPED" : "TRANSLATION STOPPED")
                 case 5:
-                    if musicOnHUD {
-                        music.pause()
-                        phone.setMusicPlaybackActive(false)
-                        setCommandStatus("MUSIC PAUSED")
-                    } else {
-                        accessory.interruptSpeech()
-                        setCommandStatus("JARVIS SPEECH STOPPED")
-                    }
+                    accessory.interruptSpeech()
+                    setCommandStatus("JARVIS SPEECH STOPPED • MUSIC CONTINUES")
                 case 6:
                     timerEnd = nil
                     timerStatus = "Timer canceled by voice"
@@ -1326,10 +1324,6 @@ struct JarvisHUDHome: View {
                     handsFree.setMode(0,force:true)
                     setCommandStatus("PINNED MESSAGE CLEARED")
                 default:
-                    if musicOnHUD {
-                        music.pause()
-                        phone.setMusicPlaybackActive(false)
-                    }
                     accessory.interruptSpeech()
                     setCommandStatus("JARVIS STOPPED")
                 }
@@ -1353,8 +1347,8 @@ struct JarvisHUDHome: View {
             if !listenWhileMusic { captions.stop() }
             music.playSong(query)
         case .pause:
-            music.pause()
-            phone.setMusicPlaybackActive(false)
+            // Music playback stays under the user's control in Apple Music.
+            lastVoiceHUDCommand = "MUSIC PROTECTED"
         case .resume:
             phone.setMusicPlaybackActive(true)
             music.resume()
