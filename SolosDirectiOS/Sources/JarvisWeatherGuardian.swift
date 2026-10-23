@@ -125,7 +125,7 @@ import Combine
                 content.sound = .default
                 let request = UNNotificationRequest(identifier:"jarvis-weather-"+UUID().uuidString,
                                                     content:content,trigger:nil)
-                UNUserNotificationCenter.current().add(request)
+                UNUserNotificationCenter.current().add(request,withCompletionHandler:{ _ in })
             }
         } else if Date() > activeUntil {
             banner = ""
