@@ -6,6 +6,7 @@ import CoreImage
 /// Pixel brightness is a software luminance adjustment, NOT the OLED backlight hardware setting.
 enum JarvisHUDVision {
     private static let settings = UserDefaults.standard
+    private static let renderingContext = CIContext(options:[.useSoftwareRenderer:false])
 
     static var brightness: CGFloat {
         CGFloat(max(0.35,min(1.7,settings.object(forKey:"hudVisionBrightness") as? Double ?? 1.0)))
@@ -36,27 +37,31 @@ enum JarvisHUDVision {
         highVisibility ? UIColor.black : UIColor(red:0.045,green:0.12,blue:0.135,alpha:1)
     }
 
-    static func apply(to original:UIImage) -> UIImage {
+    static func apply(to original:UIImage, profile:JarvisVisionProfile? = nil) -> UIImage {
+        let usedBrightness = CGFloat(profile?.brightness ?? Double(brightness))
+        let usedContrast = CGFloat(profile?.contrast ?? Double(contrast))
+        let usedSharpness = CGFloat(profile?.sharpness ?? Double(sharpening))
+        let usedDirectional = profile?.directional ?? directionalCorrection
         guard let input = CIImage(image:original) else { return original }
         let extent = CGRect(x:0,y:0,width:428,height:240)
         let color = CIFilter(name:"CIColorControls")
         color?.setValue(input,forKey:kCIInputImageKey)
-        color?.setValue(contrast,forKey:kCIInputContrastKey)
-        color?.setValue(brightness,forKey:kCIInputBrightnessKey)
+        color?.setValue(usedContrast,forKey:kCIInputContrastKey)
+        color?.setValue(usedBrightness,forKey:kCIInputBrightnessKey)
         color?.setValue(1.0,forKey:kCIInputSaturationKey)
         var result = color?.outputImage ?? input
-        if sharpening > 0 {
+        if usedSharpness > 0 {
             let sharp = CIFilter(name:"CISharpenLuminance")
             sharp?.setValue(result,forKey:kCIInputImageKey)
-            sharp?.setValue(sharpening,forKey:kCIInputSharpnessKey)
+            sharp?.setValue(usedSharpness,forKey:kCIInputSharpnessKey)
             result = sharp?.outputImage ?? result
         }
-        if directionalCorrection > 0 {
+        if usedDirectional > 0 {
             // Experimental directional unsharp mask. Distinct X/Y kernels
             // may improve perceived stroke separation; NOT a refractive correction.
-            let strength: CGFloat = directionalCorrection == 3 ? 0.45 : 0.25
-            let x: CGFloat = directionalCorrection == 2 ? 0 : strength
-            let y: CGFloat = directionalCorrection == 1 ? 0 : strength
+            let strength: CGFloat = usedDirectional == 3 ? 0.24 : 0.22
+            let x: CGFloat = usedDirectional == 2 ? 0 : strength
+            let y: CGFloat = usedDirectional == 1 ? 0 : strength
             let kernel = CIVector(values:[
                 0,-y,0,
                 -x,1+2*x+2*y,-x,
@@ -68,8 +73,7 @@ enum JarvisHUDVision {
             filter?.setValue(0,forKey:"inputBias")
             result = filter?.outputImage ?? result
         }
-        let ctx = CIContext(options:[.useSoftwareRenderer:false])
-        guard let cg = ctx.createCGImage(result.cropped(to:extent),from:extent) else {
+        guard let cg = renderingContext.createCGImage(result.cropped(to:extent),from:extent) else {
             return original
         }
         return UIImage(cgImage:cg,scale:1,orientation:.up)
