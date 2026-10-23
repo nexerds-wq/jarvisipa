@@ -71,6 +71,7 @@ struct JarvisHUDHome: View {
     @AppStorage("hudVisionBold") private var hudBold = true
     @AppStorage("hudVisionHighVisibility") private var hudHighVisibility = false
     @AppStorage("hudVisionDirectional") private var hudDirectional = 0
+    @AppStorage("hudVisionRxAxisStrength") private var hudRxAxisStrength = 0.0
     @State private var visionWizardPresented = false
     @AppStorage("hudHardwareBrightnessPreference") private var hardwareBrightnessPreference = 2
     @AppStorage("hudVisionActiveEye") private var hudActiveEye = "OD"
@@ -635,6 +636,7 @@ struct JarvisHUDHome: View {
                     JarvisVisionProfile.prescriptionStartingPoint(.right)
                 JarvisVisionProfileStorage.activate(profile,eye:.right)
                 hudActiveEye = "OD"
+                hudRxAxisStrength = 0.35
                 rightPrescriptionActivated = true
                 drawHUD()
             }.buttonStyle(.borderedProminent)
@@ -642,6 +644,25 @@ struct JarvisHUDHome: View {
                 Text("Right-eye readability settings applied. This changes pixels and text, not optical prescription power.")
                     .font(.caption2).foregroundStyle(.green)
             }
+            Text("RX-AXIS IMAGE FILTER • \(hudActiveEye == "OD" ? "15° RIGHT EYE" : "160° LEFT EYE")")
+                .font(.caption.bold()).foregroundStyle(.yellow)
+            Text("Experimental axis-aligned letter-edge filter strength: \(Int(hudRxAxisStrength * 100))%")
+                .font(.caption)
+            Slider(value:$hudRxAxisStrength,in:0...1,step:0.05)
+                .onChange(of:hudRxAxisStrength) { _,_ in drawHUD() }
+            HStack {
+                Button("RX FILTER OFF") {
+                    hudRxAxisStrength = 0
+                    drawHUD()
+                }.buttonStyle(.bordered)
+                Button("TRY RIGHT-EYE 15°") {
+                    hudActiveEye = "OD"
+                    hudRxAxisStrength = 0.35
+                    drawHUD()
+                }.buttonStyle(.borderedProminent)
+            }
+            Text("The filter samples pixels along your actual prescription axis. It is experimental, not optical sphere/cylinder correction; compare OFF versus ON through your glasses.")
+                .font(.caption2).foregroundStyle(.secondary)
             Button("START VISION CALIBRATION WIZARD") {
                 visionWizardPresented = true
             }

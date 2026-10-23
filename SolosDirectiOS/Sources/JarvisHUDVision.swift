@@ -24,6 +24,43 @@ enum JarvisHUDVision {
     static var directionalCorrection: Int {
         max(0,min(3,settings.integer(forKey:"hudVisionDirectional")))
     }
+    static var prescriptionAxisStrength: CGFloat {
+        CGFloat(max(0,min(1,settings.object(forKey:"hudVisionRxAxisStrength") as? Double ?? 0)))
+    }
+    static var prescriptionEye: JarvisVisionEye {
+        JarvisVisionEye(rawValue:settings.string(forKey:"hudVisionActiveEye") ?? "OD") ?? .right
+    }
+    /// A bounded, zero-sum, oriented high-pass kernel. This *uses the Rx axis*
+    /// but cannot optically undo astigmatism or calculate a diopter correction.
+    static func axisKernel(axisDegrees:Int, strength:CGFloat) -> CIVector {
+        let radians = Double(axisDegrees) * Double.pi / 180
+        let dx = 3.0 * cos(radians)
+        let dy = 3.0 * sin(radians)
+        var weights = Array(repeating:CGFloat(0),count:49)
+        let amount = min(0.22,max(0,Double(strength) * 0.22))
+        // Bilinear splat to opposite samples, preserving unit sum and zero DC.
+        for sign in [-1.0,1.0] {
+            let px = 3 + sign * dx
+            let py = 3 + sign * dy
+            let x0 = max(0,min(6,Int(floor(px))))
+            let y0 = max(0,min(6,Int(floor(py))))
+            let fx = px - Double(x0)
+            let fy = py - Double(y0)
+            for oy in 0...1 {
+                for ox in 0...1 {
+                    let x = x0 + ox, y = y0 + oy
+                    guard x < 7, y < 7 else { continue }
+                    let wx = ox == 0 ? (1-fx) : fx
+                    let wy = oy == 0 ? (1-fy) : fy
+                    let w = CGFloat(amount * wx * wy)
+                    weights[y*7+x] -= w
+                    weights[24] += w
+                }
+            }
+        }
+        weights[24] += 1
+        return CIVector(values:weights,count:49)
+    }
     static var highVisibility: Bool { settings.bool(forKey:"hudVisionHighVisibility") }
 
     static var foreground: UIColor { UIColor.white }
@@ -72,6 +109,16 @@ enum JarvisHUDVision {
             filter?.setValue(kernel,forKey:"inputWeights")
             filter?.setValue(0,forKey:"inputBias")
             result = filter?.outputImage ?? result
+        }
+        let axisStrength = prescriptionAxisStrength
+        if axisStrength > 0 {
+            let rx = JarvisPrescription.forEye(prescriptionEye)
+            let oriented = CIFilter(name:"CIConvolution7X7")
+            oriented?.setValue(result,forKey:kCIInputImageKey)
+            oriented?.setValue(axisKernel(axisDegrees:rx.axis,strength:axisStrength),
+                               forKey:"inputWeights")
+            oriented?.setValue(0,forKey:"inputBias")
+            result = oriented?.outputImage ?? result
         }
         guard let cg = renderingContext.createCGImage(result.cropped(to:extent),from:extent) else {
             return original
