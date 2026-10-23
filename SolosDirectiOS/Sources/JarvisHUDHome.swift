@@ -35,6 +35,7 @@ struct JarvisHUDHome: View {
     @State private var lifecycleStatus = ""
     @AppStorage("jarvisListenWhileMusic") private var listenWhileMusic = true
     @AppStorage("jarvisMediaButtonsForHUD") private var mediaButtonsForHUD = false
+    @State private var captionWakeWork: DispatchWorkItem?
     @State private var lastCaptionWakeCommand = ""
     @State private var lastCaptionWakeAt = Date.distantPast
     @State private var heard = ""
@@ -248,8 +249,12 @@ struct JarvisHUDHome: View {
             else { phone.stopListening() }
         }
         .onChange(of:scenePhase) { _, phase in
-            if phase == .active && (mode == 2 || mode == 3) && !captions.isListening {
-                startCaptioning()
+            if phase == .active {
+                if (mode == 2 || mode == 3) && !captions.isListening {
+                    startCaptioning()
+                } else if keepJarvisListening && mode != 2 && mode != 3 {
+                    phone.resumeAfterScreenUnlock()
+                }
             }
         }
         .onChange(of:mediaButtonsForHUD) { _, enabled in
@@ -279,6 +284,7 @@ struct JarvisHUDHome: View {
             phone.onHUDVoiceCommand = nil
             accessory.onSpeechCompleted = nil
             handsFree.stop()
+            captionWakeWork?.cancel()
             captionFlushWork?.cancel()
             translationDebounceWork?.cancel()
             captions.stop()
@@ -1069,6 +1075,7 @@ struct JarvisHUDHome: View {
         }
         let previousMode = mode
         mode = value
+        captionWakeWork?.cancel()
         captionFlushWork?.cancel()
         translationDebounceWork?.cancel()
         translationSessionReady = false
@@ -1157,15 +1164,24 @@ struct JarvisHUDHome: View {
         guard let range = lower.range(of:"hey jarvis") ?? lower.range(of:"oye jarvis") else { return false }
         let question = String(transcript[range.upperBound...]).trimmingCharacters(in:.whitespacesAndNewlines)
         guard !question.isEmpty else { return true }
-        // Do not execute commands on unstable partials; final transcript is
-        // reliable and prevents repeated requests as words are corrected.
-        guard isFinal else { return true }
+        // Respond after brief silence even if iOS never returns isFinal.
+        // Reset on each changed partial so the actual question is preserved.
+        captionWakeWork?.cancel()
+        if !isFinal {
+            let pending = transcript
+            let job = DispatchWorkItem { _ = handleCaptionWakePhrase(pending,isFinal:true) }
+            captionWakeWork = job
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.85,execute:job)
+            return true
+        }
+        captionWakeWork = nil
         guard question != lastCaptionWakeCommand ||
               Date().timeIntervalSince(lastCaptionWakeAt) > 8 else { return true }
         lastCaptionWakeCommand = question
         lastCaptionWakeAt = Date()
         if routeVoiceHUDCommand(transcript,wakeAlreadyVerified:true) { return true }
-        talkToCompanion(question)
+        if companionEnabled { talkToCompanion(question) }
+        else { phone.ask(question) }
         return true
     }
 

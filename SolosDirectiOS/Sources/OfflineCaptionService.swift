@@ -37,6 +37,10 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var tapInstalled = false
     private let requestLock = NSLock()
     private var activeSpeechRecognizer: SFSpeechRecognizer?
+    private var healthTimer: Timer?
+    private var lastAudioBufferAt = Date.distantPast
+    private var lastRecognitionAt = Date.distantPast
+    private var taskStartedAt = Date.distantPast
     private var observerTokens = [NSObjectProtocol]()
     private var failureCount = 0
     private var lastRestart = Date.distantPast
@@ -99,6 +103,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         recentUnexpectedRestarts.removeAll()
         audioInterrupted = false
         lastAudioConfiguration = .distantPast
+        lastAudioBufferAt = .distantPast
+        lastRecognitionAt = .distantPast
         desired = true
         localeCode = locale
         recognizedLanguage = name
@@ -181,7 +187,6 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                 try audio.setCategory(.playAndRecord,mode:.default,
                                       options:[.mixWithOthers,.allowBluetoothHFP,.defaultToSpeaker])
             }
-            try audio.setActive(true)
             if preferPhoneMicrophone,
                let builtIn = audio.availableInputs?.first(where: { $0.portType == .builtInMic }) {
                 try audio.setPreferredInput(builtIn)
@@ -220,6 +225,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                 self.request?.append(buffer)
                 self.requestLock.unlock()
                 self.buffersCaptured += 1
+                self.lastAudioBufferAt = Date()
                 if self.buffersCaptured % 45 == 0 {
                     let count = self.buffersCaptured
                     DispatchQueue.main.async { [weak self] in
@@ -238,6 +244,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
             let current = generation
             startCaptionTask(speech,captureRequest,generation:current)
             scheduleCaptionTaskRotation(generation:current)
+            startHealthMonitor()
         } catch {
             starting = false
             cleanup()
@@ -272,16 +279,20 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         requestLock.unlock()
         startCaptionTask(speech,next,generation:current)
         scheduleCaptionTaskRotation(generation:current)
+        lastRecognitionAt = Date()
         status = "\(recognizerMode) • microphone remains active"
     }
 
     private func startCaptionTask(_ speech:SFSpeechRecognizer,
                                   _ captureRequest:SFSpeechAudioBufferRecognitionRequest,
                                   generation current:Int) {
+            taskStartedAt = Date()
+            lastRecognitionAt = Date()
             task = speech.recognitionTask(with:captureRequest) { [weak self] result, error in
                 DispatchQueue.main.async {
                     guard let self, self.desired, self.generation == current else { return }
                     if let result {
+                        self.lastRecognitionAt = Date()
                         let words = result.bestTranscription.formattedString
                             .trimmingCharacters(in:.whitespacesAndNewlines)
                         if !words.isEmpty {
@@ -317,6 +328,28 @@ final class OfflineCaptionService: NSObject, ObservableObject {
 
     }
 
+    // A healthy AVAudioEngine can continue capturing while iOS Speech silently
+    // stops delivering results. Recover the task without tearing down audio.
+    // Also recover true microphone stoppages after route/lock interruptions.
+    private func startHealthMonitor() {
+        healthTimer?.invalidate()
+        healthTimer = Timer.scheduledTimer(withTimeInterval:4,repeats:true) { [weak self] _ in
+            guard let self, self.desired, !self.audioInterrupted, !self.starting else { return }
+            if !self.engine.isRunning || !self.isListening {
+                self.scheduleRestart(reason:"Caption microphone stopped")
+                return
+            }
+            if Date().timeIntervalSince(self.lastAudioBufferAt) > 12 {
+                self.scheduleRestart(reason:"Solos microphone stopped supplying audio")
+                return
+            }
+            if Date().timeIntervalSince(self.lastRecognitionAt) > 65 &&
+               Date().timeIntervalSince(self.taskStartedAt) > 12 {
+                self.rotateCaptionTask()
+            }
+        }
+    }
+
     private func scheduleRestart(reason:String) {
         guard desired, !audioInterrupted, restartTask == nil else { return }
         let current = Date()
@@ -333,10 +366,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
             // Automatic microphone recovery must never become a CPU/memory
             // restart storm when another app owns audio or the route is bad.
             if recentUnexpectedRestarts.count >= 6 {
-                desired = false
-                cleanup()
-                status = "Speech paused after repeated audio errors. Switch HUD away and back to retry."
-                return
+                status = "Repeated Solos mic interruptions; retrying with backoff"
             }
         }
         lastRestart = current
@@ -344,7 +374,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         restartTask?.cancel()
         cleanup()
         failureCount += 1
-        let delay = expectedRotation ? 0.35 : min(5.0,0.9 + Double(failureCount) * 0.45)
+        let delay = expectedRotation ? 0.35 : min(30.0,0.9 + Double(failureCount) * 0.75)
         status = "\(reason). Reconnecting mic..."
         let expected = generation
         let job = DispatchWorkItem { [weak self] in
@@ -359,6 +389,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     }
 
     private func cleanup() {
+        healthTimer?.invalidate()
+        healthTimer = nil
         if engine.isRunning { engine.stop() }
         if tapInstalled {
             engine.inputNode.removeTap(onBus:0)
