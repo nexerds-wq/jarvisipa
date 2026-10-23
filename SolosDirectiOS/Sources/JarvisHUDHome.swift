@@ -3,6 +3,7 @@ import Translation
 import UserNotifications
 import HealthKit
 import Combine
+import Contacts
 
 /// HUD-first controller. The iPhone is a remote and a live preview; the
 /// glasses receive identical 428x240 image frames only if iOS exposes an
@@ -29,6 +30,13 @@ struct JarvisHUDHome: View {
     @State private var question = ""
     @State private var sender = "MESSAGE"
     @State private var message = ""
+    @State private var senderPhoto: UIImage?
+    @State private var messagePages = ["NO MESSAGE YET"]
+    @State private var currentMessagePage = 0
+    @State private var lastMessagePageAt = Date.distantPast
+    @State private var messageRelayStatus = "Use Shortcuts → Show Jarvis Message for incoming texts"
+    @State private var lastMessageID = ""
+    @State private var showContactPicker = false
     @State private var heartRate = "—"
     @State private var reminderText = ""
     @State private var remindAt = Date().addingTimeInterval(3600)
@@ -112,6 +120,18 @@ struct JarvisHUDHome: View {
             phone.refreshSensors()
             requestHeartRate()
             selectMode(0)
+            restorePinnedMessageIfNeeded()
+            consumeShortcutMessage()
+        }
+        .onOpenURL { url in acceptIncomingMessageURL(url) }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("SolosJarvisIncomingMessage"))) { _ in
+            consumeShortcutMessage()
+        }
+        .sheet(isPresented: $showContactPicker) {
+            SolosMessageContactPicker { name, photo in
+                sender = name
+                senderPhoto = photo
+            }
         }
         .onDisappear {
             captions.stop()
@@ -141,6 +161,11 @@ struct JarvisHUDHome: View {
         }
         .onReceive(ticker) { now in
             if mode == 0 { drawHUD(throttled:true) }
+            if mode == 4 && messagePages.count > 1 && now.timeIntervalSince(lastMessagePageAt) >= 7 {
+                currentMessagePage = (currentMessagePage + 1) % messagePages.count
+                lastMessagePageAt = now
+                drawHUD()
+            }
             if mode == 6 {
                 if let end = timerEnd, now >= end {
                     timerEnd = nil
@@ -267,13 +292,28 @@ struct JarvisHUDHome: View {
             }
         case 4:
             section("PIN A MESSAGE TO HUD") {
-                TextField("Sender name",text:$sender).textFieldStyle(.roundedBorder)
+                HStack {
+                    if let photo = senderPhoto {
+                        Image(uiImage: photo).resizable().scaledToFill()
+                            .frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 9))
+                    }
+                    TextField("Sender name",text:$sender).textFieldStyle(.roundedBorder)
+                    Button("Contact") { showContactPicker = true }.buttonStyle(.bordered)
+                }
                 TextField("Message",text:$message,axis:.vertical).lineLimit(2...5).textFieldStyle(.roundedBorder)
                 HStack {
                     Button("Paste") { message = UIPasteboard.general.string ?? "" }
-                    Button("Pin to HUD") { drawHUD() }
+                    Button("Pin to HUD") { pinMessage(sender: sender, body: message) }
                 }.buttonStyle(.borderedProminent)
-                Text("iOS does not let this app read every iMessage. Use Share or a personal Shortcuts automation to pass a message.")
+                if messagePages.count > 1 {
+                    Button("NEXT MESSAGE PAGE  \(currentMessagePage + 1)/\(messagePages.count)") {
+                        currentMessagePage = (currentMessagePage + 1) % messagePages.count
+                        lastMessagePageAt = Date()
+                        drawHUD()
+                    }.buttonStyle(.bordered)
+                }
+                Text(messageRelayStatus).font(.caption2).foregroundStyle(.green)
+                Text("For incoming iMessages, create a Shortcuts → Automation → Message trigger, then use the Show Jarvis Message action with Sender and Message. iOS does not allow automatic reading of all Messages.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         case 5:
@@ -384,6 +424,9 @@ struct JarvisHUDHome: View {
 
     private func selectMode(_ value:Int) {
         guard (0..<7).contains(value) else { return }
+        if mode == 4 && value != 4 {
+            UserDefaults.standard.set(false, forKey:"jarvisMessagePinned")
+        }
         mode = value
         captions.stop()
         translationContinuation?.finish()
@@ -439,7 +482,7 @@ struct JarvisHUDHome: View {
             renderMode = 1
         case 2: text = heard; renderMode = 2
         case 3: text = translated; renderMode = 3
-        case 4: text = message; renderMode = 4
+        case 4: text = messagePages[min(currentMessagePage, messagePages.count - 1)]; renderMode = 4
         case 5: text = answer; renderMode = 5
         case 6:
             text = timerEnd.map { "TIMER\n" + formatRemaining($0) } ?? "TIMER READY"
@@ -450,7 +493,8 @@ struct JarvisHUDHome: View {
             mode:renderMode,clock:phone.clock,date:phone.dateLine,
             steps:Int(phone.steps) ?? 0,distance:phone.distance,
             speed:phone.speed,battery:phone.battery,gps:phone.coordinates,
-            message:text,detail:detail,sender:sender)
+            message:text,detail:detail,sender:sender,
+            senderPhoto:senderPhoto,messagePage:currentMessagePage + 1,pageCount:messagePages.count)
         image = output
         // sendHUDImage drops obsolete ordinary frames while busy. No new BLE
         // transport is fabricated if iOS does not expose an accessory session.
@@ -503,6 +547,89 @@ struct JarvisHUDHome: View {
                 DispatchQueue.main.async { heartRate = String(bpm); if mode == 0 { drawHUD() } }
             }
             health.execute(query)
+        }
+    }
+
+
+    private func pinMessage(sender newSender:String, body newBody:String) {
+        let clean = newBody.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !clean.isEmpty else {
+            messageRelayStatus = "Add message text first."
+            return
+        }
+        sender = String(newSender.prefix(80))
+        message = String(clean.prefix(12_000))
+        messagePages = SolosProHUD.messagePages(message)
+        currentMessagePage = 0
+        lastMessagePageAt = Date()
+        let defaults = UserDefaults.standard
+        defaults.set(sender,forKey:"jarvisPinnedSender")
+        defaults.set(message,forKey:"jarvisPinnedBody")
+        defaults.set(true,forKey:"jarvisMessagePinned")
+        messageRelayStatus = "PINNED · \(messagePages.count) page(s) · \(sender)"
+        handsFree.setMode(4,force:true)
+    }
+
+    private func restorePinnedMessageIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey:"jarvisMessagePinned"),
+              let text = defaults.string(forKey:"jarvisPinnedBody"), !text.isEmpty else { return }
+        sender = defaults.string(forKey:"jarvisPinnedSender") ?? "NEW MESSAGE"
+        message = text
+        messagePages = SolosProHUD.messagePages(text)
+        currentMessagePage = 0
+        lastMessagePageAt = Date()
+        loadContactPhoto(for:sender)
+        handsFree.setMode(4,force:true)
+    }
+
+    private func consumeShortcutMessage() {
+        let defaults = UserDefaults.standard
+        guard let id = defaults.string(forKey:"jarvisIncomingMessageID"),
+              id != lastMessageID,
+              let text = defaults.string(forKey:"jarvisIncomingMessageBody"),
+              !text.isEmpty else { return }
+        lastMessageID = id
+        let incomingSender = defaults.string(forKey:"jarvisIncomingMessageSender") ?? "NEW MESSAGE"
+        defaults.removeObject(forKey:"jarvisIncomingMessageID")
+        defaults.removeObject(forKey:"jarvisIncomingMessageSender")
+        defaults.removeObject(forKey:"jarvisIncomingMessageBody")
+        senderPhoto = nil
+        loadContactPhoto(for: incomingSender)
+        pinMessage(sender:incomingSender,body:text)
+    }
+
+    private func acceptIncomingMessageURL(_ url:URL) {
+        guard url.scheme?.lowercased() == "solosjarvis",
+              url.host?.lowercased() == "message",
+              let items = URLComponents(url:url,resolvingAgainstBaseURL:false)?.queryItems,
+              let body = items.first(where:{$0.name == "body"})?.value,
+              !body.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return }
+        let from = items.first(where:{$0.name == "from"})?.value ?? "NEW MESSAGE"
+        senderPhoto = nil
+        loadContactPhoto(for:from)
+        pinMessage(sender:from,body:body)
+    }
+
+    private func loadContactPhoto(for name:String) {
+        let auth = CNContactStore.authorizationStatus(for:.contacts)
+        guard auth == .authorized || auth == .limited else { return }
+        let store = CNContactStore()
+        let keys = [CNContactGivenNameKey,CNContactFamilyNameKey,CNContactThumbnailImageDataKey] as [CNKeyDescriptor]
+        do {
+            let found: [CNContact]
+            if name.contains(where:{$0.isNumber}) {
+                found = try store.unifiedContacts(matching:CNContact.predicateForContacts(
+                    matching:CNPhoneNumber(stringValue:name)),keysToFetch:keys)
+            } else {
+                found = try store.unifiedContacts(matching:CNContact.predicateForContacts(
+                    matchingName:name),keysToFetch:keys)
+            }
+            if let contact = found.first {
+                senderPhoto = contact.thumbnailImageData.flatMap(UIImage.init(data:))
+            }
+        } catch {
+            messageRelayStatus = "Contact photo not available"
         }
     }
 
