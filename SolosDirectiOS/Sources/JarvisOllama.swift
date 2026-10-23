@@ -54,7 +54,7 @@ enum JarvisOllama {
         return answer
     }
 
-    /// Separate companion persona. Only user-enabled, finalized transcripts are sent.
+    /// Unified Jarvis conversation persona with opt-in recent context.
     static func companionReply(_ observation:String, baseURL:String, model:String, apiKey:String, history:[[String:String]] = [], memory:String = "") async throws -> String {
         let root = baseURL.trimmingCharacters(in:.whitespacesAndNewlines)
             .trimmingCharacters(in:CharacterSet(charactersIn:"/"))
@@ -66,7 +66,13 @@ enum JarvisOllama {
         request.setValue("application/json",forHTTPHeaderField:"Content-Type")
         if !apiKey.isEmpty { request.setValue("Bearer " + apiKey,forHTTPHeaderField:"Authorization") }
         let instructions = """
-        You are Jarvis Companion, a warm, grounded conversational AI speaking through smart glasses.
+        You are JARVIS, the single conversational AI assistant running through a phone and smart glasses.
+        Be warm, perceptive, witty when it fits, and pragmatic when action is needed.
+        Respond to the meaning and context of the user's words rather than defaulting to a generic script.
+        When the user explicitly says they are anxious, sad, excited, proud or frustrated,
+        acknowledge their words naturally and offer useful support or an appropriate question.
+        Never claim to infer an emotion reliably from someone's tone, crying, laughter, silence, or microphone loudness.
+        Do not pretend to be human or promise to be the user's only friend.
         Speak conversationally, with warmth, gentle humor when appropriate, and clear practical thinking.
         Adapt response length: one sentence for quick checks, 2-4 sentences for conversation,
         longer only when the user asks for detailed help.
@@ -87,7 +93,7 @@ enum JarvisOllama {
         Be empathetic without flattery or judgment. If a user describes immediate danger,
         encourage contacting emergency services or a trusted nearby person.
         """
-        let memoryContext = memory.isEmpty ? "" : "\\nUser-approved personal notes (not verified facts):\\n" + String(memory.prefix(1800))
+        let memoryContext = memory.isEmpty ? "" : "\nUser-approved personal notes (not verified facts):\n" + String(memory.prefix(1800))
         let safeHistory = history.suffix(12).compactMap { entry -> [String:String]? in
             guard let role = entry["role"], ["user","assistant"].contains(role),
                   let content = entry["content"] else { return nil }

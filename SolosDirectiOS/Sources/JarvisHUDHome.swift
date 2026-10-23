@@ -89,7 +89,7 @@ struct JarvisHUDHome: View {
     @State private var companionLastResponse = Date.distantPast
     @State private var showConnection = false
     @State private var showSettings = false
-    @State private var showAdvancedSettings = false
+    @State private var showHUDTools = false
     @State private var showMemoryControls = false
     @State private var jarvisSpeaking = false
     @AppStorage("hudVisionBrightness") private var hudBrightness = 1.0
@@ -142,6 +142,7 @@ struct JarvisHUDHome: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
+                    DisclosureGroup("HUD TOOLS · " + names[mode],isExpanded:$showHUDTools) {
                     ScrollView(.horizontal,showsIndicators:false) {
                         HStack(spacing:8) {
                             ForEach(0..<names.count,id:\.self) { index in
@@ -154,17 +155,17 @@ struct JarvisHUDHome: View {
                             }
                         }
                     }
-                    if hudSleeping {
-                        section(hudQuitRequested ? "JARVIS CLOSED • SOFTWARE IDLE" : "HUD STANDBY") {
+
+                        if hudSleeping {
                             Text(lifecycleStatus).font(.caption)
-                            Button("WAKE JARVIS / RESTORE HUD") { wakeJarvis() }
-                                .buttonStyle(.borderedProminent)
-                            Text("iOS apps cannot power off the phone or glasses hardware. Quit stops listening; tap Wake to resume.")
-                                .font(.caption2).foregroundStyle(.secondary)
+                            Button("WAKE JARVIS") { wakeJarvis() }
+                        } else {
+                            modeControls
                         }
-                    } else {
-                        modeControls
                     }
+                    .font(.subheadline)
+                    .padding(11)
+                    .background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:12))
                     if showConnection { connectionPanel }
                     if showSettings {
                         section("CONNECTION") {
@@ -847,103 +848,6 @@ struct JarvisHUDHome: View {
                 Text("Saved notes are included with requests to your configured Ollama server. Conversation history stays in memory for this app session.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
-        }
-    }
-
-    private var companionPanel: some View {
-        section("JARVIS • ADVANCED LEGACY CONTROLS") {
-            Toggle("Enable emotional companion",isOn:$companionEnabled)
-            VStack(alignment:.leading,spacing:8) {
-                Text("PINNED SMART TASKS").font(.headline)
-                TextField("Task title",text:$smartTaskTitle).textFieldStyle(.roundedBorder)
-                Picker("Type",selection:$smartTaskKind) {
-                    Text("Reminder").tag("reminder")
-                    Text("Alarm").tag("alarm")
-                    Text("Timer").tag("timer")
-                }.pickerStyle(.segmented)
-                Stepper("After \\(smartTaskMinutes) minutes",value:$smartTaskMinutes,in:1...1440)
-                Button("CREATE & PIN ON HUD") {
-                    let title = smartTaskTitle.trimmingCharacters(in:.whitespacesAndNewlines)
-                    smartTasks.add(title:title.isEmpty ? smartTaskKind.capitalized : title,
-                                   kind:smartTaskKind,after:TimeInterval(smartTaskMinutes * 60))
-                    smartTaskTitle = ""
-                    drawHUD()
-                }.buttonStyle(.borderedProminent)
-                ForEach(smartTasks.pinned.prefix(4)) { item in
-                    HStack {
-                        Text(item.kind.uppercased() + " • " + item.title)
-                            .font(.caption).lineLimit(1)
-                        Spacer()
-                        Button("DONE") { smartTasks.complete(item.id); drawHUD() }
-                            .font(.caption2)
-                        Button("X") { smartTasks.remove(item.id); drawHUD() }
-                            .font(.caption2)
-                    }
-                }
-            }
-            Toggle("Offer support when speech suggests distress",isOn:$companionAutoSupport)
-                .disabled(!companionEnabled)
-            Toggle("Speak companion replies aloud",isOn:$companionSpeak)
-                .disabled(!companionEnabled)
-            Picker("Companion voice",selection:$companionStyle) {
-                Text("FRIDAY • warm").tag("FRIDAY")
-                Text("EDITH • calm").tag("EDITH")
-            }.pickerStyle(.segmented)
-            Button("TEST NATURAL VOICE") {
-                accessory.speakCompanion("I'm here. What's on your mind?",style:companionStyle)
-            }.buttonStyle(.bordered)
-            Toggle("Analyze vocal energy and pauses (experimental)",isOn:$companionSoundCues)
-                .disabled(!companionEnabled)
-            Text(emotionCues.status).font(.caption2).foregroundStyle(.secondary)
-            Text("Sound analysis requires microphone access. It only estimates loudness and silence, not sadness, laughter, crying, or the identity of a speaker.")
-                .font(.caption2).foregroundStyle(.secondary)
-            Toggle("Remember conversation during this app session",isOn:$companionMemoryEnabled)
-            Toggle("Voice follow-ups addressed to Jarvis in captions",isOn:$companionTurnTaking)
-                .disabled(!companionEnabled)
-            HStack {
-                Button("START CONVERSATION") {
-                    companionQuiet = false
-                    companionConversationUntil = Date().addingTimeInterval(companionFollowUpSeconds)
-                    selectMode(2)
-                    companionStatus = "Conversation window open • captions listening"
-                }
-                Button("QUIET / STOP") {
-                    companionQuiet = true
-                    companionConversationUntil = .distantPast
-                    companionStatus = "Companion quiet"
-                }
-            }.buttonStyle(.bordered)
-            Text("When conversation is open, follow-up speech is accepted for 35 seconds after each turn. Saying 'Jarvis, quiet' closes it. This works through active captions, not while another app owns the mic.")
-                .font(.caption2).foregroundStyle(.secondary)
-            TextField("A preference or fact Jarvis should remember",text:$companionNoteDraft,axis:.vertical)
-                .lineLimit(1...3).textFieldStyle(.roundedBorder)
-            Button("SAVE PERSONAL NOTE") {
-                let note = companionNoteDraft.trimmingCharacters(in:.whitespacesAndNewlines)
-                if !note.isEmpty {
-                    companionNotes = String((companionNotes + "\n" + note).suffix(1800))
-                    companionNoteDraft = ""
-                }
-            }.disabled(!companionMemoryEnabled || companionNoteDraft.isEmpty)
-            Text(companionNotes.isEmpty ? "No saved notes" : companionNotes)
-                .font(.caption2).foregroundStyle(.secondary)
-            HStack {
-                Button("FORGET CONVERSATION") { companionHistory.removeAll() }
-                Button("DELETE SAVED NOTES") { companionNotes = "" }
-            }.buttonStyle(.bordered)
-            Text("Saved notes remain in app preferences until deleted. Conversation history lasts only this app session. Both are shared with your configured Ollama server when used.")
-                .font(.caption2).foregroundStyle(.secondary)
-            Text("Optional: uses the same Ollama server and model configured in Settings, but a separate supportive personality. No API key is needed for a local Ollama server.")
-                .font(.caption2).foregroundStyle(.secondary)
-            TextField("Tell Jarvis how you're feeling...",text:$companionInput,axis:.vertical)
-                .lineLimit(1...3).textFieldStyle(.roundedBorder)
-            Button("TALK TO COMPANION") { talkToCompanion(companionInput) }
-                .disabled(!companionEnabled || companionBusy || companionInput.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
-                .buttonStyle(.borderedProminent)
-            Text(companionBusy ? "Companion thinking..." : companionReply)
-                .font(.body)
-            Text(companionStatus).font(.caption2).foregroundStyle(.secondary)
-            Text("Automatic suggestions use finalized speech transcripts only while captions are active, with a cooldown. They cannot identify crying, gasping, laughter or your emotions reliably. The companion does not listen secretly, analyze calls or interrupt videos. Turn it off anytime.")
-                .font(.caption2).foregroundStyle(.secondary)
         }
     }
 
