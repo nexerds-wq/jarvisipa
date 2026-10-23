@@ -127,57 +127,12 @@ struct JarvisHUDHome: View {
             ScrollView {
                 VStack(alignment:.leading, spacing:14) {
                     header
-                    if !weatherGuardian.banner.isEmpty {
-                        Text(weatherGuardian.banner).font(.caption.bold())
-                            .foregroundStyle(.red)
-                    }
+                    weatherAlertStrip
                     jarvisPanel
                     preview
-                    HStack(spacing:12) {
-                        Button("◀ BACK") { handsFree.previousMode(force:true) }
-                        Spacer()
-                        Text("\(mode + 1) / 7").font(.caption.monospaced()).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("NEXT ▶") { handsFree.nextMode(force:true) }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.green)
-                    DisclosureGroup("HUD TOOLS · " + names[mode],isExpanded:$showHUDTools) {
-                    ScrollView(.horizontal,showsIndicators:false) {
-                        HStack(spacing:8) {
-                            ForEach(0..<names.count,id:\.self) { index in
-                                Button(names[index]) { handsFree.setMode(index,force:true) }
-                                    .font(.caption.bold())
-                                    .padding(.horizontal,11).padding(.vertical,9)
-                                    .background(mode == index ? Color.green.opacity(0.28) : Color.white.opacity(0.08),
-                                                in:RoundedRectangle(cornerRadius:9))
-                                    .foregroundStyle(.white)
-                            }
-                        }
-                    }
-
-                        if hudSleeping {
-                            Text(lifecycleStatus).font(.caption)
-                            Button("WAKE JARVIS") { wakeJarvis() }
-                        } else {
-                            modeControls
-                        }
-                    }
-                    .font(.subheadline)
-                    .padding(11)
-                    .background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:12))
-                    if showConnection { connectionPanel }
-                    if showSettings {
-                        section("CONNECTION") {
-                            Text(accessory.status).font(.caption)
-                            Button("CONNECT / DIAGNOSE") { showConnection = true; accessory.refresh() }
-                        }
-                        visionPanel
-                        visionCalibrationPanel
-                        settingsPanel
-                    }
-                    Text("Actual glasses display needs an iOS-authorized accessory data connection. Pairing Bluetooth audio alone does not give this app OLED access.")
-                        .font(.caption2).foregroundStyle(.orange)
+                    hudNavigationButtons
+                    hudToolDisclosure
+                    advancedPanels
                 }
                 .padding(15)
             }
@@ -189,6 +144,70 @@ struct JarvisHUDHome: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder private var weatherAlertStrip: some View {
+        if !weatherGuardian.banner.isEmpty {
+            Text(weatherGuardian.banner).font(.caption.bold())
+                .foregroundStyle(.red)
+        }
+    }
+
+    private var hudNavigationButtons: some View {
+        HStack(spacing:12) {
+            Button("◀ BACK") { handsFree.previousMode(force:true) }
+            Spacer()
+            Text("\(mode + 1) / 7").font(.caption.monospaced()).foregroundStyle(.secondary)
+            Spacer()
+            Button("NEXT ▶") { handsFree.nextMode(force:true) }
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.green)
+    }
+
+    private var hudToolDisclosure: some View {
+        DisclosureGroup("HUD TOOLS · " + names[mode],isExpanded:$showHUDTools) {
+            hudModePicker
+            if hudSleeping {
+                Text(lifecycleStatus).font(.caption)
+                Button("WAKE JARVIS") { wakeJarvis() }
+            } else {
+                modeControls
+            }
+        }
+        .font(.subheadline)
+        .padding(11)
+        .background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:12))
+    }
+
+    private var hudModePicker: some View {
+        ScrollView(.horizontal,showsIndicators:false) {
+            HStack(spacing:8) {
+                ForEach(0..<names.count,id:\.self) { index in
+                    Button(names[index]) { handsFree.setMode(index,force:true) }
+                        .font(.caption.bold())
+                        .padding(.horizontal,11).padding(.vertical,9)
+                        .background(mode == index ? Color.green.opacity(0.28) : Color.white.opacity(0.08),
+                                    in:RoundedRectangle(cornerRadius:9))
+                        .foregroundStyle(.white)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var advancedPanels: some View {
+        if showConnection { connectionPanel }
+        if showSettings {
+            section("CONNECTION") {
+                Text(accessory.status).font(.caption)
+                Button("CONNECT / DIAGNOSE") { showConnection = true; accessory.refresh() }
+            }
+            visionPanel
+            visionCalibrationPanel
+            settingsPanel
+        }
+        Text("Glasses display requires an authorized accessory connection; Bluetooth audio pairing alone does not provide HUD access.")
+            .font(.caption2).foregroundStyle(.orange)
     }
 
     private var hudWithLifecycle: some View {
