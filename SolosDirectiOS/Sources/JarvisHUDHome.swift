@@ -15,6 +15,7 @@ struct JarvisHUDHome: View {
     @StateObject private var captions = OfflineCaptionService()
     @StateObject private var navigation = SolosNavigationEngine()
     @StateObject private var music = JarvisAppleMusic()
+    @StateObject private var weatherGuardian = JarvisWeatherGuardian()
     private let health = HKHealthStore()
 
     @State private var mode = 0
@@ -100,6 +101,17 @@ struct JarvisHUDHome: View {
                 VStack(alignment:.leading, spacing:14) {
                     header
                     preview
+                    section("WEATHER GUARDIAN • AUTO GPS • NO API KEY") {
+                        Text(weatherGuardian.status).font(.caption)
+                        Text("Temperature: " + weatherGuardian.temperature)
+                        if !weatherGuardian.banner.isEmpty {
+                            Text(weatherGuardian.banner).font(.headline.bold()).foregroundStyle(.red)
+                        }
+                        Button("CHECK WEATHER NOW") { weatherGuardian.refresh() }
+                            .buttonStyle(.borderedProminent)
+                        Text("NWS tornado/hurricane/flood/storm alerts and Open-Meteo rain forecasts. HUD banner overrides any selected screen while Jarvis is running. No true nearby lightning strike detector; iOS background delivery is not instantaneous or guaranteed.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                     HStack(spacing:12) {
                         Button("◀ BACK") { handsFree.previousMode(force:true) }
                         Spacer()
@@ -160,6 +172,7 @@ struct JarvisHUDHome: View {
             if mediaButtonsForHUD { handsFree.enableMediaButtons() }
             accessory.refresh()
             phone.refreshSensors()
+            weatherGuardian.start()
             requestHeartRate()
             if keepJarvisListening { phone.startListening() }
             selectMode(0)
@@ -197,6 +210,7 @@ struct JarvisHUDHome: View {
             captionFlushWork?.cancel()
             translationDebounceWork?.cancel()
             captions.stop()
+            weatherGuardian.stop()
             translationContinuation?.finish()
             translationContinuation = nil
             phone.setHUDCaptionsActive(false)
@@ -256,6 +270,7 @@ struct JarvisHUDHome: View {
                 phone.setMusicPlaybackActive(false)
             }
         }
+        .onChange(of:weatherGuardian.banner) { _,_ in drawHUD() }
         .onReceive(ticker) { now in
             if hudSleeping { return }
             if mode == 0 { drawHUD(throttled:true) }
@@ -1114,7 +1129,7 @@ struct JarvisHUDHome: View {
             speed:phone.speed,battery:phone.battery,gps:phone.coordinates,
             message:text,detail:detail,sender:sender,
             senderPhoto:senderPhoto,messagePage:currentMessagePage + 1,pageCount:messagePages.count)
-        let tuned = JarvisHUDVision.apply(to:output)
+        let tuned = weatherGuardian.overlay(JarvisHUDVision.apply(to:output))
         image = tuned
         // sendHUDImage drops obsolete ordinary frames while busy. No new BLE
         // transport is fabricated if iOS does not expose an accessory session.
