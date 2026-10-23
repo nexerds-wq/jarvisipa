@@ -27,7 +27,7 @@ struct JarvisHUDHome: View {
     @State private var hudSleeping = false
     @State private var hudQuitRequested = false
     @State private var lifecycleStatus = ""
-    @AppStorage("jarvisListenWhileMusic") private var listenWhileMusic = false
+    @AppStorage("jarvisListenWhileMusic") private var listenWhileMusic = true
     @AppStorage("jarvisMediaButtonsForHUD") private var mediaButtonsForHUD = false
     @State private var heard = ""
     @State private var translated = ""
