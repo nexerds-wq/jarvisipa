@@ -1,52 +1,72 @@
-name: Jarvis Fast IPA
+name: Build Jarvis Glasses IPA
+
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "JarvisGlasses/**"
+      - "project.yml"
+      - ".github/workflows/main.yml"
 
 permissions:
   contents: read
 
+concurrency:
+  group: jarvis-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  ipa:
+  build:
+    name: Build iOS IPA
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
+
     steps:
-      - name: Check out Solos HUD
+      - name: Check out Jarvis source
         uses: actions/checkout@v4
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Download Flutter dependencies
-        working-directory: solos_hud
-        run: flutter pub get
-
-      - name: Check and apply speed fixes
+      - name: Install XcodeGen
         run: |
-          python3 apply_fast_fix.py --check
-          python3 apply_fast_fix.py --apply
+          brew install xcodegen
+          xcodegen --version
+          xcodebuild -version
 
-      - name: Build release iOS app without signing
-        working-directory: solos_hud
-        run: flutter build ios --release --no-codesign
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
 
-      - name: Package IPA
-        working-directory: solos_hud
+      - name: Build for iPhone (no code signing)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project JarvisGlasses.xcodeproj \
+            -scheme JarvisGlasses \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/jarvis-derived" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
         run: |
           set -euo pipefail
-          test -f build/ios/iphoneos/Runner.app/Info.plist
-          test -f build/ios/iphoneos/Runner.app/Runner
-          mkdir -p ipa/Payload
-          cp -R build/ios/iphoneos/Runner.app ipa/Payload/
-          (cd ipa && ditto -c -k --sequesterRsrc --keepParent Payload Jarvis-Fast-unsigned.ipa)
-          unzip -t ipa/Jarvis-Fast-unsigned.ipa | tail -n 3
+          APP="$RUNNER_TEMP/jarvis-derived/Build/Products/Release-iphoneos/JarvisGlasses.app"
+          test -d "$APP"
+          test -f "$APP/Info.plist"
+          test -f "$APP/JarvisGlasses"
+          plutil -lint "$APP/Info.plist"
+          mkdir -p dist/Payload
+          ditto "$APP" dist/Payload/JarvisGlasses.app
+          (cd dist && ditto -c -k --sequesterRsrc --keepParent Payload JarvisGlasses-unsigned.ipa)
+          unzip -t dist/JarvisGlasses-unsigned.ipa | tail -n 3
 
-      - name: Attach IPA file
+      - name: Upload IPA for download
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-Fast-unsigned-IPA
-          path: solos_hud/ipa/Jarvis-Fast-unsigned.ipa
+          name: JarvisGlasses-unsigned-IPA
+          path: dist/JarvisGlasses-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
