@@ -28,4 +28,7 @@
 </array>
 <key>UILaunchScreen</key><dict/>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+<key>NSHealthShareUsageDescription</key><string>Jarvis reads the latest available heart-rate sample from Apple Health to show it on your HUD.</string>
+<key>NSLocalNetworkUsageDescription</key><string>Jarvis connects to the Ollama model on your local network when you enable online AI.</string>
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
