@@ -19,16 +19,19 @@ The HeyCyan iOS SDK files you provided show that the glasses have an onboard wak
 
 The same SDK research also confirms the glasses microphone can appear to iOS as a normal Bluetooth HFP input. V2 uses that route when it is available and performs the custom “Hey Jarvis” detection on the iPhone.
 
-## Build the IPA on GitHub
+## Build and download the IPA from GitHub
 
-1. Create a new GitHub repository.
-2. Upload **everything inside this folder**, including `.github`.
-3. Open the repository's **Actions** tab.
-4. Run **Build Jarvis Glasses V2 IPA**.
-5. Open the finished workflow.
-6. Download the artifact named `JarvisGlasses-V2-unsigned-ipa`.
-7. Extract it. Inside is `JarvisGlasses-V2-unsigned.ipa`.
-8. Install that IPA with Sideloadly.
+The working Swift iOS build runs automatically when Jarvis source files change. You can also start it manually:
+
+1. Open [Jarvis IPA GitHub Actions](https://github.com/nexerds-wq/jarvisipa/actions/workflows/main.yml).
+2. Choose **Build Jarvis Glasses IPA** and click **Run workflow**.
+3. Open the completed run, then download the **JarvisGlasses-unsigned-IPA** artifact.
+4. Unzip that GitHub artifact. Inside is **JarvisGlasses-unsigned.ipa**.
+5. Sign and sideload the IPA with Sideloadly or another trusted signing tool. It is **unsigned**, so it cannot be installed by tapping the file on an iPhone.
+
+**Verified build:** [GitHub Actions run 39888798902](https://github.com/nexerds-wq/jarvisipa/actions/runs/39888798902) finished successfully on October 22, 2026 (Eastern time).
+
+**Compatibility note:** This builds the native Swift JarvisGlasses app (M02S BLE assistant and Solos HUD preview/diagnostics), **not** the separate Flutter `solos_hud` project. Building the IPA does not unlock unrestricted Bluetooth Classic RFCOMM or guarantee that an older Solos lens display can receive frames from an iPhone.
 
 ## First setup
 
