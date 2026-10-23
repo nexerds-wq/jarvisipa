@@ -44,9 +44,10 @@ jobs:
           # Compatibility fixes for the current Flutter / speech_to_text API.
           dart = pathlib.Path("appsource/solos_hud/lib/jarvis/jarvis_app.dart")
           body = dart.read_text()
+          body = body.replace("          localeId: locale, listenFor:", "          listenFor:")
           body = body.replace(
-              "        listenOptions: SpeechListenOptions(\\n          localeId: locale, listenFor:",
-              "        localeId: locale,\\n        listenOptions: SpeechListenOptions(\\n          listenFor:"
+              "        listenOptions: SpeechListenOptions(",
+              "        localeId: locale," + chr(10) + "        listenOptions: SpeechListenOptions(", 1
           )
           body = body.replace(
               "icon: const Icon(Icons.file_open), child: const Text('Import offline GGUF model')",
