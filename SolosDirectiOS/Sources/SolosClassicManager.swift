@@ -203,6 +203,27 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
     }
 
+    /// Voice selection uses installed iOS speech voices; no external TTS API key.
+    func speakCompanion(_ text:String, style:String) {
+        let trimmed = text.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        speaker.stopSpeaking(at:.immediate)
+        let utterance = AVSpeechUtterance(string:trimmed)
+        let voices = AVSpeechSynthesisVoice.speechVoices().filter {
+            $0.language.hasPrefix("en") && $0.quality == .enhanced
+        }
+        let preferred = voices.first(where: { voice in
+            style == "FRIDAY" ? voice.name.localizedCaseInsensitiveContains("Samantha") :
+                voice.name.localizedCaseInsensitiveContains("Ava")
+        }) ?? voices.first
+        utterance.voice = preferred ?? AVSpeechSynthesisVoice(language:"en-US")
+        utterance.rate = style == "FRIDAY" ? 0.48 : 0.51
+        utterance.pitchMultiplier = style == "FRIDAY" ? 1.08 : 0.98
+        utterance.preUtteranceDelay = 0.12
+        speaker.speak(utterance)
+        status = "Companion speaking through current iPhone audio route: " + audioRoute
+    }
+
     func speak(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

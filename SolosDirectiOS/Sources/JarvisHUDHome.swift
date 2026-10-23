@@ -66,6 +66,9 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisCompanionEnabled") private var companionEnabled = false
     @AppStorage("jarvisCompanionAutoSupport") private var companionAutoSupport = false
     @AppStorage("jarvisCompanionSpeak") private var companionSpeak = false
+    @AppStorage("jarvisCompanionStyle") private var companionStyle = "FRIDAY"
+    @AppStorage("jarvisCompanionSoundCues") private var companionSoundCues = false
+    @StateObject private var emotionCues = JarvisEmotionCues()
     @State private var companionInput = ""
     @State private var companionReply = "I'm here when you want to talk."
     @State private var companionStatus = "Off until enabled"
@@ -182,6 +185,7 @@ struct JarvisHUDHome: View {
             accessory.refresh()
             phone.refreshSensors()
             weatherGuardian.start()
+            if companionEnabled && companionSoundCues { emotionCues.start() }
             requestHeartRate()
             if keepJarvisListening { phone.startListening() }
             selectMode(0)
@@ -220,6 +224,7 @@ struct JarvisHUDHome: View {
             translationDebounceWork?.cancel()
             captions.stop()
             weatherGuardian.stop()
+            emotionCues.stop()
             translationContinuation?.finish()
             translationContinuation = nil
             phone.setHUDCaptionsActive(false)
@@ -281,6 +286,8 @@ struct JarvisHUDHome: View {
             }
         }
         .onChange(of:weatherGuardian.banner) { _,_ in drawHUD() }
+        .onChange(of:companionEnabled) { _,_ in syncEmotionCues() }
+        .onChange(of:companionSoundCues) { _,_ in syncEmotionCues() }
         .onReceive(ticker) { now in
             if hudSleeping { return }
             if mode == 0 { drawHUD(throttled:true) }
@@ -728,6 +735,18 @@ struct JarvisHUDHome: View {
                 .disabled(!companionEnabled)
             Toggle("Speak companion replies aloud",isOn:$companionSpeak)
                 .disabled(!companionEnabled)
+            Picker("Companion voice",selection:$companionStyle) {
+                Text("FRIDAY • warm").tag("FRIDAY")
+                Text("EDITH • calm").tag("EDITH")
+            }.pickerStyle(.segmented)
+            Button("TEST NATURAL VOICE") {
+                accessory.speakCompanion("I'm here. What's on your mind?",style:companionStyle)
+            }.buttonStyle(.bordered)
+            Toggle("Analyze vocal energy and pauses (experimental)",isOn:$companionSoundCues)
+                .disabled(!companionEnabled)
+            Text(emotionCues.status).font(.caption2).foregroundStyle(.secondary)
+            Text("Sound analysis requires microphone access. It only estimates loudness and silence, not sadness, laughter, crying, or the identity of a speaker.")
+                .font(.caption2).foregroundStyle(.secondary)
             Text("Optional: uses the same Ollama server and model configured in Settings, but a separate supportive personality. No API key is needed for a local Ollama server.")
                 .font(.caption2).foregroundStyle(.secondary)
             TextField("Tell Jarvis how you're feeling...",text:$companionInput,axis:.vertical)
@@ -740,6 +759,14 @@ struct JarvisHUDHome: View {
             Text(companionStatus).font(.caption2).foregroundStyle(.secondary)
             Text("Automatic suggestions use finalized speech transcripts only while captions are active, with a cooldown. They cannot identify crying, gasping, laughter or your emotions reliably. The companion does not listen secretly, analyze calls or interrupt videos. Turn it off anytime.")
                 .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func syncEmotionCues() {
+        if companionEnabled && companionSoundCues && mode != 2 && mode != 3 && !musicOnHUD {
+            emotionCues.start()
+        } else {
+            emotionCues.stop()
         }
     }
 
@@ -788,7 +815,8 @@ struct JarvisHUDHome: View {
                     companionStatus = "Companion replied"
                     companionBusy = false
                     if companionSpeak && !musicOnHUD && mode != 2 && mode != 3 {
-                        accessory.speak(reply)
+                        emotionCues.stop()
+                        accessory.speakCompanion(reply,style:companionStyle)
                     }
                     drawHUD()
                 }
