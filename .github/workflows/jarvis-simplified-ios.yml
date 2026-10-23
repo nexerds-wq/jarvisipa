@@ -53,6 +53,18 @@ jobs:
               "icon: const Icon(Icons.file_open), child: const Text('Import offline GGUF model')",
               "icon: const Icon(Icons.file_open), label: const Text('Import offline GGUF model')"
           )
+          # Older speech_to_text platform interfaces need listenFor/pauseFor
+          # at the speech.listen call level, not inside SpeechListenOptions.
+          lines = body.splitlines()
+          start = next((i for i, line in enumerate(lines)
+                        if line.strip() == "listenOptions: SpeechListenOptions("), -1)
+          if start >= 0:
+              lines.pop(start)
+              for idx in range(start, len(lines)):
+                  if lines[idx].strip() == "),":
+                      lines.pop(idx)
+                      break
+              body = chr(10).join(lines) + chr(10)
           dart.write_text(body)
           print("Applied Jarvis source patch and configured iOS 16.4 + HealthKit entitlement")
           PY
