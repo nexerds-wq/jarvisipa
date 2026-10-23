@@ -554,6 +554,22 @@ struct JarvisHUDHome: View {
 
     private var visionPanel: some View {
         section("HUD DISPLAY TUNING • 428 × 240") {
+            Button("MATCH MY IPHONE • CLEAR TEXT PRESET") {
+                // Match the phone's high-legibility rendering style, not its
+                // physical luminance: the Widescreen OLED has different optics.
+                hudBrightness = 1.0
+                hudContrast = 1.55
+                hudSharpness = 0.0
+                hudTextScale = 1.45
+                hudBold = true
+                hudHighVisibility = false
+                hudDirectional = 0
+                drawHUD()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
+            Text("iPhone-style: bright white, large bold type on pure black, without sharpening halos. Solos cannot match the iPhone's actual nits, pixel density, or autofocus.")
+                .font(.caption2).foregroundStyle(.secondary)
             Text("SOLOS WIDESCREEN • REAL DISPLAY BRIGHTNESS")
                 .font(.caption.bold()).foregroundStyle(.green)
             Picker("Hardware brightness preference",selection:$hardwareBrightnessPreference) {
