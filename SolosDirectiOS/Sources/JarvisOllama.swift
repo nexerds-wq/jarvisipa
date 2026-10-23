@@ -55,7 +55,7 @@ enum JarvisOllama {
     }
 
     /// Separate companion persona. Only user-enabled, finalized transcripts are sent.
-    static func companionReply(_ observation:String, baseURL:String, model:String, apiKey:String) async throws -> String {
+    static func companionReply(_ observation:String, baseURL:String, model:String, apiKey:String, history:[[String:String]] = [], memory:String = "") async throws -> String {
         let root = baseURL.trimmingCharacters(in:.whitespacesAndNewlines)
             .trimmingCharacters(in:CharacterSet(charactersIn:"/"))
         guard let url = URL(string:root + "/api/chat"),
@@ -77,10 +77,16 @@ enum JarvisOllama {
         Be empathetic without flattery or judgment. If a user describes immediate danger,
         encourage contacting emergency services or a trusted nearby person.
         """
+        let memoryContext = memory.isEmpty ? "" : "\\nUser-approved personal notes (not verified facts):\\n" + String(memory.prefix(1800))
+        let safeHistory = history.suffix(12).compactMap { entry -> [String:String]? in
+            guard let role = entry["role"], ["user","assistant"].contains(role),
+                  let content = entry["content"] else { return nil }
+            return ["role":role,"content":String(content.prefix(900))]
+        }
+        let messages = [["role":"system","content":instructions + memoryContext]] +
+            safeHistory + [["role":"user","content":observation]]
         request.httpBody = try JSONSerialization.data(withJSONObject:[
-            "model":model,"stream":false,
-            "messages":[["role":"system","content":instructions],
-                        ["role":"user","content":observation]]
+            "model":model,"stream":false,"messages":messages
         ])
         let (data,response) = try await URLSession.shared.data(for:request)
         guard let http = response as? HTTPURLResponse else { throw Failure.emptyAnswer }

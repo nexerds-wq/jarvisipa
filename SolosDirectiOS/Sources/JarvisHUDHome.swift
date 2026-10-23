@@ -69,6 +69,11 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisCompanionStyle") private var companionStyle = "FRIDAY"
     @AppStorage("jarvisCompanionSoundCues") private var companionSoundCues = false
     @StateObject private var emotionCues = JarvisEmotionCues()
+    @AppStorage("jarvisCompanionMemoryEnabled") private var companionMemoryEnabled = false
+    @AppStorage("jarvisCompanionNotes") private var companionNotes = ""
+    @AppStorage("jarvisCompanionTurnTaking") private var companionTurnTaking = false
+    @State private var companionHistory = [[String:String]]()
+    @State private var companionNoteDraft = ""
     @State private var companionInput = ""
     @State private var companionReply = "I'm here when you want to talk."
     @State private var companionStatus = "Off until enabled"
@@ -747,6 +752,26 @@ struct JarvisHUDHome: View {
             Text(emotionCues.status).font(.caption2).foregroundStyle(.secondary)
             Text("Sound analysis requires microphone access. It only estimates loudness and silence, not sadness, laughter, crying, or the identity of a speaker.")
                 .font(.caption2).foregroundStyle(.secondary)
+            Toggle("Remember conversation during this app session",isOn:$companionMemoryEnabled)
+            Toggle("Voice follow-ups addressed to Jarvis in captions",isOn:$companionTurnTaking)
+                .disabled(!companionEnabled)
+            TextField("A preference or fact Jarvis should remember",text:$companionNoteDraft,axis:.vertical)
+                .lineLimit(1...3).textFieldStyle(.roundedBorder)
+            Button("SAVE PERSONAL NOTE") {
+                let note = companionNoteDraft.trimmingCharacters(in:.whitespacesAndNewlines)
+                if !note.isEmpty {
+                    companionNotes = String((companionNotes + "\n" + note).suffix(1800))
+                    companionNoteDraft = ""
+                }
+            }.disabled(!companionMemoryEnabled || companionNoteDraft.isEmpty)
+            Text(companionNotes.isEmpty ? "No saved notes" : companionNotes)
+                .font(.caption2).foregroundStyle(.secondary)
+            HStack {
+                Button("FORGET CONVERSATION") { companionHistory.removeAll() }
+                Button("DELETE SAVED NOTES") { companionNotes = "" }
+            }.buttonStyle(.bordered)
+            Text("Saved notes remain in app preferences until deleted. Conversation history lasts only this app session. Both are shared with your configured Ollama server when used.")
+                .font(.caption2).foregroundStyle(.secondary)
             Text("Optional: uses the same Ollama server and model configured in Settings, but a separate supportive personality. No API key is needed for a local Ollama server.")
                 .font(.caption2).foregroundStyle(.secondary)
             TextField("Tell Jarvis how you're feeling...",text:$companionInput,axis:.vertical)
@@ -771,10 +796,15 @@ struct JarvisHUDHome: View {
     }
 
     private func considerCompanionTranscript(_ transcript:String) {
-        guard companionEnabled, companionAutoSupport, !companionBusy,
+        guard companionEnabled, !companionBusy,
               Date().timeIntervalSince(companionLastResponse) > 180,
               !musicOnHUD, mode == 2 else { return }
         let lower = transcript.lowercased()
+        if companionTurnTaking && lower.hasPrefix("jarvis ") && lower.count > 12 {
+            talkToCompanion(String(transcript.dropFirst(7)))
+            return
+        }
+        guard companionAutoSupport else { return }
         let signals = ["i'm frustrated","i am frustrated","i'm sad","i am sad",
                        "i feel alone","i'm overwhelmed","i am overwhelmed",
                        "i need someone to talk to","i'm upset","i am upset"]
@@ -807,11 +837,20 @@ struct JarvisHUDHome: View {
         companionLastResponse = Date()
         companionStatus = "Contacting Ollama companion..."
         let server = ollamaServer, model = ollamaModel, key = ollamaKey
+        let previous = companionMemoryEnabled ? companionHistory : []
+        let notes = companionMemoryEnabled ? companionNotes : ""
         Task {
             do {
-                let reply = try await JarvisOllama.companionReply(text,baseURL:server,model:model,apiKey:key)
+                let reply = try await JarvisOllama.companionReply(text,baseURL:server,model:model,apiKey:key,history:previous,memory:notes)
                 await MainActor.run {
                     companionReply = reply
+                    if companionMemoryEnabled {
+                        companionHistory.append(["role":"user","content":String(text.prefix(900))])
+                        companionHistory.append(["role":"assistant","content":String(reply.prefix(900))])
+                        if companionHistory.count > 12 {
+                            companionHistory.removeFirst(companionHistory.count - 12)
+                        }
+                    }
                     companionStatus = "Companion replied"
                     companionBusy = false
                     if companionSpeak && !musicOnHUD && mode != 2 && mode != 3 {
@@ -889,6 +928,7 @@ struct JarvisHUDHome: View {
         phone.setHUDCaptionsActive(value == 2 || value == 3)
         if value == 2 || value == 3 { startCaptioning() }
         if value == 0 { phone.refreshSensors() }
+        syncEmotionCues()
         drawHUD()
     }
 
