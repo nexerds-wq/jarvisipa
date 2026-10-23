@@ -81,7 +81,7 @@ struct JarvisHUDHome: View {
         self._accessory = ObservedObject(wrappedValue: phone.accessory)
     }
 
-    var body: some View {
+    private var mainLayout: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment:.leading, spacing:14) {
@@ -135,6 +135,10 @@ struct JarvisHUDHome: View {
                 }
             }
         }
+    }
+
+    var body: some View {
+        mainLayout
         .preferredColorScheme(.dark)
         .onAppear {
             handsFree.onModeChange = { newMode in selectMode(newMode) }
