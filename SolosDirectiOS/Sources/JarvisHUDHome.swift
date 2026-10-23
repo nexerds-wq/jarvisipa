@@ -425,7 +425,7 @@ struct JarvisHUDHome: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
-                Text("Plays saved Music library tracks directly — no developer token needed. If a track isn't in your library, use Open in Apple Music to find it.")
+                Text("Searches the full Apple Music catalog by song name using public song IDs. Attempts direct playback with your Apple Music subscription — without MusicKit developer tokens. If unavailable, tries your library and offers Open in Apple Music.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
         default:

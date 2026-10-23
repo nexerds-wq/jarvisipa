@@ -1,20 +1,22 @@
 import Foundation
 import Combine
 import MediaPlayer
+import StoreKit
 import UIKit
 
-/// Apple Music playback that also works with free sideloaded builds:
-/// MediaPlayer can play items in the user's Music library without ever
-/// requesting the MusicKit developer token. Full Apple Music catalog search
-/// still requires MusicKit App Service, so unknown songs get a Music app link.
+/// Voice playback using Apple's public iTunes song search and the system
+/// Music player's store-ID queue. The public search requires no MusicKit token.
+/// MediaPlayer can request playback for Apple Music catalog songs with a valid
+/// subscription; user-library playback remains the offline/permission fallback.
 @MainActor
 final class JarvisAppleMusic: ObservableObject {
-    @Published private(set) var status = "Hey Jarvis, play a song from my Music library"
+    @Published private(set) var status = "Hey Jarvis, play any Apple Music song"
     @Published private(set) var nowPlaying = ""
     @Published private(set) var isBusy = false
     @Published private(set) var searchURL: URL?
 
     private let player = MPMusicPlayerController.systemMusicPlayer
+    private let cloudService = SKCloudServiceController()
     private var generation = 0
 
     func playSong(_ spokenQuery: String) {
@@ -27,7 +29,7 @@ final class JarvisAppleMusic: ObservableObject {
         let id = generation
         searchURL = appleMusicSearchURL(for:query)
         isBusy = true
-        status = "Searching your Apple Music library for \(query)..."
+        status = "Searching Apple Music for \(query)..."
 
         switch MPMediaLibrary.authorizationStatus() {
         case .notDetermined:
@@ -55,6 +57,74 @@ final class JarvisAppleMusic: ObservableObject {
             status = "Allow Media & Apple Music access in iPhone Settings, or open this song in Apple Music."
             return
         }
+        Task { await searchEntireCatalog(query,requestID:requestID) }
+    }
+
+    private func searchEntireCatalog(_ query:String,requestID:Int) async {
+        guard generation == requestID else { return }
+        do {
+            let country = Locale.current.region?.identifier ?? "US"
+            guard let song = try await JarvisSongCatalog.search(query,country:country),
+                  let storeID = song.identifier else {
+                searchLibrary(query,requestID:requestID,
+                              context:"That track was not found in the public Apple Music search.")
+                return
+            }
+            guard generation == requestID else { return }
+            status = "Found \(song.label) • checking Apple Music playback..."
+            let capability: Bool? = await withCheckedContinuation { continuation in
+                cloudService.requestCapabilities { capabilities,error in
+                    continuation.resume(returning:error == nil ?
+                        capabilities.contains(.musicCatalogPlayback) : nil)
+                }
+            }
+            guard generation == requestID else { return }
+            if capability == false {
+                searchLibrary(query,requestID:requestID,
+                    context:"Apple Music catalog playback isn't enabled. Check your subscription.")
+                return
+            }
+
+            player.stop()
+            // This is the Apple-documented MediaPlayer *store identifier*
+            // path. It does NOT call MusicCatalogSearchRequest or request a
+            // MusicKit developer token.
+            player.setQueue(with:[storeID])
+            status = "Loading from Apple Music: \(song.label)"
+            let preparedError: Error? = await withCheckedContinuation { continuation in
+                player.prepareToPlay { error in continuation.resume(returning:error) }
+            }
+            guard generation == requestID else { return }
+            if let preparedError {
+                searchLibrary(query,requestID:requestID,
+                    context:"Apple Music couldn't prepare this song: \(preparedError.localizedDescription).")
+                return
+            }
+            player.play()
+            nowPlaying = song.label
+            isBusy = false
+            status = "Requested Apple Music playback: \(song.label)"
+            // Some iPhone music queues take a moment to begin streaming.
+            // Verify playback instead of telling the user it worked without
+            // checking the system player's actual state.
+            try? await Task.sleep(for:.seconds(3))
+            guard generation == requestID else { return }
+            if player.playbackState == .playing {
+                status = "Now playing: \(song.label)"
+                searchURL = nil
+            } else {
+                status = "Apple Music didn't start this song. Check subscription or tap Open in Apple Music."
+            }
+        } catch {
+            guard generation == requestID else { return }
+            searchLibrary(query,requestID:requestID,
+                          context:"Public Apple Music search unavailable: \(error.localizedDescription).")
+        }
+    }
+
+    private func searchLibrary(_ query:String,requestID:Int,context:String) {
+        guard generation == requestID else { return }
+        status = context + " Checking saved songs..."
         let (title,artist) = Self.songAndArtist(from:query)
         let titleKey = Self.normalized(title)
         let artistKey = artist.map(Self.normalized)
@@ -77,7 +147,7 @@ final class JarvisAppleMusic: ObservableObject {
 
         guard let song = chosen else {
             isBusy = false
-            status = "Not in your Music library: \(query). Tap Open in Apple Music to search the full catalog."
+            status = context + " No saved copy found. Use Open in Apple Music."
             return
         }
 

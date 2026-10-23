@@ -50,6 +50,12 @@ jobs:
           xcrun swiftc -parse-as-library Sources/JarvisMusicCommands.swift Tests/MusicCommandSmoke.swift -o /tmp/jarvis-music-tests
           /tmp/jarvis-music-tests
 
+      - name: Verify public catalog matching
+        working-directory: SolosDirectiOS
+        run: |
+          xcrun swiftc -parse-as-library Sources/JarvisSongCatalog.swift Tests/JarvisSongCatalogSmoke.swift -o /tmp/jarvis-catalog-tests
+          /tmp/jarvis-catalog-tests
+
       - name: Build iPhone app (unsigned)
         working-directory: SolosDirectiOS
         run: |

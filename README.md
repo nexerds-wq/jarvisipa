@@ -33,15 +33,14 @@ Enable **Settings → Listen for Hey Jarvis when possible** while you are on the
 
 The IPA remains unsigned and actual lens image transmission still depends on a supported Bluetooth data transport on iOS.
 
-## Apple Music voice playback — token-free library mode
+## Apple Music voice playback — full catalog attempt without MusicKit tokens
 
-**Problem fixed:** The old Apple Music integration used a MusicKit catalog request and raised "Failed to request developer token" on sideloaded apps. This version does **not** call MusicKit when playing library songs.
+Say **"Hey Jarvis, play Blinding Lights by The Weeknd"**, or another song and artist. Jarvis uses Apple's *public iTunes Store search* to find a track identifier and sends it to the iPhone's system Music player using `MPMusicPlayerController.setQueue(with: [storeID])`. Apple's documented store-ID queue does not use MusicKit's developer token. This attempts to play tracks **even if they have not been added to your library**, provided your Apple Music subscription and storefront permit the track.
 
-1. Install the latest IPA and enable **Listen for Hey Jarvis when possible**, or tap **Listen** in Jarvis.
-2. Say **"Hey Jarvis, play [song title] by [artist]"**. The app requests access to the **Media & Apple Music** library and searches for songs you have added to your Music library. If found, it uses Apple's built-in system music player to start playback directly, without a developer token.
-3. Say **"Hey Jarvis pause music"**, **"Hey Jarvis resume music"**, **"Hey Jarvis next song"**, or **"Hey Jarvis previous song"** for playback controls.
-4. If the requested song is not in your Music library, tap **OPEN IN APPLE MUSIC • SEARCH FULL CATALOG** in Jarvis. The Apple Music app opens the search; **select the song there yourself** to play it.
+**Setup:** Enable *Listen for Hey Jarvis when possible* in Jarvis Settings; allow Media & Apple Music permissions; have an active Apple Music subscription; connect the iPhone to the internet. Songs may not be available in all regions, and the iTunes Store result must match an Apple Music-playable store ID. Playback is verified using the iOS Music player's state rather than assumed to succeed.
 
-**Limit:** Songs not in your library cannot be automatically selected and played by voice through the full Apple Music catalog without a properly registered MusicKit App Service or another supported Apple playback workflow. Search links are not auto-play. For future full-catalog MusicKit access, register MusicKit App Service for the *exact* signed bundle ID with Apple Developer. The unsigned IPA does not register that app service automatically.
+**Fallback:** If the full-catalog request fails or playback is unavailable, Jarvis checks the Music library. If that also doesn't work, the *Open in Apple Music* button takes you to search; you must tap the desired song. The fallback never claims it auto-played a song when it didn't.
 
-For playback through the Solos glasses' speakers, pair the glasses as a Bluetooth audio output in iOS. Image transmission on the 428×240 HUD is a separate connection. Continuous "Hey Jarvis" listening may be suspended by iOS while music plays or when the app is backgrounded. Siri can still control Apple Music using "Hey Siri, play ...".
+**Controls:** "Hey Jarvis pause music", "Hey Jarvis resume music", "Hey Jarvis next song", and "Hey Jarvis previous song". The current music selection/status is displayed on Jarvis HUD. Note that iOS may suspend third-party wake-word recognition while playing music or in the background; you can use Siri or the on-screen controls.
+
+For the original Solos display, Bluetooth audio output is separate from the authorized HUD image data connection. A passing GitHub IPA compile does not prove real-lens image delivery.
