@@ -67,15 +67,15 @@ struct JarvisHUDHome: View {
     @State private var ollamaKey = ""
     @State private var serperKey = ""
     @State private var aiBusy = false
-    @AppStorage("jarvisCompanionEnabled") private var companionEnabled = false
+    @AppStorage("jarvisCompanionEnabled") private var companionEnabled = true
     @AppStorage("jarvisCompanionAutoSupport") private var companionAutoSupport = false
-    @AppStorage("jarvisCompanionSpeak") private var companionSpeak = false
+    @AppStorage("jarvisCompanionSpeak") private var companionSpeak = true
     @AppStorage("jarvisCompanionStyle") private var companionStyle = "FRIDAY"
     @AppStorage("jarvisCompanionSoundCues") private var companionSoundCues = false
     @StateObject private var emotionCues = JarvisEmotionCues()
-    @AppStorage("jarvisCompanionMemoryEnabled") private var companionMemoryEnabled = false
+    @AppStorage("jarvisCompanionMemoryEnabled") private var companionMemoryEnabled = true
     @AppStorage("jarvisCompanionNotes") private var companionNotes = ""
-    @AppStorage("jarvisCompanionTurnTaking") private var companionTurnTaking = false
+    @AppStorage("jarvisCompanionTurnTaking") private var companionTurnTaking = true
     @AppStorage("jarvisCompanionFollowUpSeconds") private var companionFollowUpSeconds = 35.0
     @State private var companionConversationUntil = Date.distantPast
     @State private var companionLastTranscript = ""
@@ -89,6 +89,9 @@ struct JarvisHUDHome: View {
     @State private var companionLastResponse = Date.distantPast
     @State private var showConnection = false
     @State private var showSettings = false
+    @State private var showAdvancedSettings = false
+    @State private var showMemoryControls = false
+    @State private var jarvisSpeaking = false
     @AppStorage("hudVisionBrightness") private var hudBrightness = 1.0
     @AppStorage("hudVisionContrast") private var hudContrast = 1.3
     @AppStorage("hudVisionSharpness") private var hudSharpness = 0.25
@@ -124,18 +127,12 @@ struct JarvisHUDHome: View {
             ScrollView {
                 VStack(alignment:.leading, spacing:14) {
                     header
-                    preview
-                    section("WEATHER GUARDIAN • AUTO GPS • NO API KEY") {
-                        Text(weatherGuardian.status).font(.caption)
-                        Text("Temperature: " + weatherGuardian.temperature)
-                        if !weatherGuardian.banner.isEmpty {
-                            Text(weatherGuardian.banner).font(.headline.bold()).foregroundStyle(.red)
-                        }
-                        Button("CHECK WEATHER NOW") { weatherGuardian.refresh() }
-                            .buttonStyle(.borderedProminent)
-                        Text("NWS tornado/hurricane/flood/storm alerts and Open-Meteo rain forecasts. HUD banner overrides any selected screen while Jarvis is running. No true nearby lightning strike detector; iOS background delivery is not instantaneous or guaranteed.")
-                            .font(.caption2).foregroundStyle(.secondary)
+                    if !weatherGuardian.banner.isEmpty {
+                        Text(weatherGuardian.banner).font(.caption.bold())
+                            .foregroundStyle(.red)
                     }
+                    jarvisPanel
+                    preview
                     HStack(spacing:12) {
                         Button("◀ BACK") { handsFree.previousMode(force:true) }
                         Spacer()
@@ -168,20 +165,26 @@ struct JarvisHUDHome: View {
                     } else {
                         modeControls
                     }
-                    connectionSummary
                     if showConnection { connectionPanel }
-                    companionPanel
-                    if showSettings { visionPanel; visionCalibrationPanel; settingsPanel }
+                    if showSettings {
+                        section("CONNECTION") {
+                            Text(accessory.status).font(.caption)
+                            Button("CONNECT / DIAGNOSE") { showConnection = true; accessory.refresh() }
+                        }
+                        visionPanel
+                        visionCalibrationPanel
+                        settingsPanel
+                    }
                     Text("Actual glasses display needs an iOS-authorized accessory data connection. Pairing Bluetooth audio alone does not give this app OLED access.")
                         .font(.caption2).foregroundStyle(.orange)
                 }
                 .padding(15)
             }
             .background(Color.black)
-            .navigationTitle("JARVIS HUD")
+            .navigationTitle("JARVIS")
             .toolbar {
                 ToolbarItem(placement:.topBarTrailing) {
-                    Button("Settings") { showSettings.toggle() }
+                    Button(showSettings ? "Done" : "Advanced") { showSettings.toggle() }
                 }
             }
         }
@@ -194,6 +197,17 @@ struct JarvisHUDHome: View {
             handsFree.onModeChange = { newMode in selectMode(newMode) }
             phone.onHUDVoiceCommand = { spoken in routeVoiceHUDCommand(spoken,wakeAlreadyVerified:true) }
             accessory.onAccessoryPacket = { data in handsFree.input(data) }
+            accessory.onSpeechCompleted = {
+                DispatchQueue.main.async {
+                    guard jarvisSpeaking else { return }
+                    jarvisSpeaking = false
+                    if mode == 2 && !companionQuiet {
+                        DispatchQueue.main.asyncAfter(deadline:.now() + 0.35) {
+                            if mode == 2 && !jarvisSpeaking && !companionQuiet { startCaptioning() }
+                        }
+                    }
+                }
+            }
             if mediaButtonsForHUD { handsFree.enableMediaButtons() }
             accessory.refresh()
             phone.refreshSensors()
@@ -232,6 +246,7 @@ struct JarvisHUDHome: View {
         }
         .onDisappear {
             phone.onHUDVoiceCommand = nil
+            accessory.onSpeechCompleted = nil
             handsFree.stop()
             captionFlushWork?.cancel()
             translationDebounceWork?.cancel()
@@ -741,8 +756,102 @@ struct JarvisHUDHome: View {
         }
     }
 
+    private var jarvisPanel: some View {
+        section("JARVIS • YOUR AI") {
+            HStack(spacing:8) {
+                Circle().fill(companionBusy ? .orange : .green)
+                    .frame(width:9,height:9)
+                Text(companionBusy ? "Thinking..." : (jarvisSpeaking ? "Speaking..." : "Ready to talk"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("VOICE TEST") {
+                    accessory.speakCompanion("Hey. I'm Jarvis. Tell me what you're working on, and we'll figure it out together.",style:"JARVIS")
+                }.font(.caption)
+            }
+            TextField("Ask Jarvis anything...",text:$companionInput,axis:.vertical)
+                .lineLimit(1...4).textFieldStyle(.roundedBorder)
+            HStack {
+                Button("SEND") {
+                    let message = companionInput.trimmingCharacters(in:.whitespacesAndNewlines)
+                    guard !message.isEmpty else { return }
+                    companionInput = ""
+                    talkToCompanion(message)
+                }
+                .disabled(companionBusy || companionInput.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                Button("TALK") {
+                    companionEnabled = true
+                    companionTurnTaking = true
+                    companionSpeak = true
+                    companionQuiet = false
+                    companionConversationUntil = Date().addingTimeInterval(companionFollowUpSeconds)
+                    selectMode(2)
+                    companionStatus = "Listening for Jarvis voice commands"
+                }
+                Button("QUIET") {
+                    companionQuiet = true
+                    companionConversationUntil = .distantPast
+                    accessory.stopSpeaking()
+                    jarvisSpeaking = false
+                    companionStatus = "Quiet"
+                }
+            }.buttonStyle(.borderedProminent)
+            Text(companionReply).font(.body)
+            if companionStatus.hasPrefix("Companion unavailable") {
+                Text(companionStatus).font(.caption).foregroundStyle(.orange)
+            }
+            if !smartTasks.pinned.isEmpty {
+                ForEach(smartTasks.pinned.prefix(3)) { task in
+                    HStack {
+                        Image(systemName:task.kind == "timer" ? "timer" : "bell")
+                        Text(task.title).lineLimit(1)
+                        Spacer()
+                        Text(task.due,style:.relative).font(.caption.monospaced())
+                        Button {
+                            smartTasks.complete(task.id); drawHUD()
+                        } label: { Image(systemName:"checkmark.circle") }
+                    }.font(.caption)
+                }
+            }
+            DisclosureGroup("Tasks & memory",isExpanded:$showMemoryControls) {
+                HStack {
+                    TextField("Task name",text:$smartTaskTitle)
+                        .textFieldStyle(.roundedBorder)
+                    Stepper("\(smartTaskMinutes)m",value:$smartTaskMinutes,in:1...1440)
+                        .fixedSize()
+                }
+                Picker("Task",selection:$smartTaskKind) {
+                    Text("Reminder").tag("reminder")
+                    Text("Timer").tag("timer")
+                    Text("Alarm").tag("alarm")
+                }.pickerStyle(.segmented)
+                Button("PIN TASK") {
+                    let name = smartTaskTitle.trimmingCharacters(in:.whitespacesAndNewlines)
+                    smartTasks.add(title:name.isEmpty ? smartTaskKind.capitalized : name,
+                                   kind:smartTaskKind,after:TimeInterval(smartTaskMinutes * 60))
+                    smartTaskTitle = ""
+                    drawHUD()
+                }
+                TextField("Remember this about me...",text:$companionNoteDraft)
+                    .textFieldStyle(.roundedBorder)
+                Button("SAVE MEMORY") {
+                    let note = companionNoteDraft.trimmingCharacters(in:.whitespacesAndNewlines)
+                    guard !note.isEmpty else { return }
+                    companionNotes = String((companionNotes + "\n" + note).suffix(1800))
+                    companionNoteDraft = ""
+                }
+                .disabled(companionNoteDraft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                HStack {
+                    Button("Forget chat") { companionHistory.removeAll() }
+                    Button("Delete memories") { companionNotes = "" }
+                }.font(.caption).buttonStyle(.bordered)
+                Text("Saved notes are included with requests to your configured Ollama server. Conversation history stays in memory for this app session.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var companionPanel: some View {
-        section("JARVIS COMPANION • SECOND OLLAMA PERSONA") {
+        section("JARVIS • ADVANCED LEGACY CONTROLS") {
             Toggle("Enable emotional companion",isOn:$companionEnabled)
             VStack(alignment:.leading,spacing:8) {
                 Text("PINNED SMART TASKS").font(.headline)
@@ -928,7 +1037,7 @@ struct JarvisHUDHome: View {
     }
 
     private func talkToCompanion(_ text:String) {
-        guard companionEnabled, !companionBusy else { return }
+        guard !companionBusy else { return }
         companionBusy = true
         companionLastResponse = Date()
         companionStatus = "Contacting Ollama companion..."
@@ -949,9 +1058,11 @@ struct JarvisHUDHome: View {
                     }
                     companionStatus = "Companion replied"
                     companionBusy = false
-                    if companionSpeak && !musicOnHUD && mode != 2 && mode != 3 {
+                    if companionSpeak && !musicOnHUD && mode != 3 {
                         emotionCues.stop()
-                        accessory.speakCompanion(reply,style:companionStyle)
+                        if mode == 2 { captions.stop() }
+                        jarvisSpeaking = true
+                        accessory.speakCompanion(reply,style:"JARVIS")
                     }
                     drawHUD()
                 }
@@ -966,7 +1077,9 @@ struct JarvisHUDHome: View {
 
     private var settingsPanel: some View {
         section("AI • PRIVACY • SPEECH") {
-            Toggle("Online Ollama (off = iPhone on-device AI)",isOn:$online)
+            Text("One Jarvis AI, powered by Ollama for conversation. Without a reachable Ollama model, the iPhone's separate built-in answer feature remains available.")
+                .font(.caption).foregroundStyle(.secondary)
+            Toggle("Use Ollama for legacy Ask screen",isOn:$online)
             TextField("Ollama address",text:$ollamaServer).textInputAutocapitalization(.never)
                 .keyboardType(.URL).textFieldStyle(.roundedBorder)
             TextField("Model name",text:$ollamaModel).textInputAutocapitalization(.never)

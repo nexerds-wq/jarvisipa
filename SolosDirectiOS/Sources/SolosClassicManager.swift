@@ -204,24 +204,42 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     }
 
     /// Voice selection uses installed iOS speech voices; no external TTS API key.
+    /// Prefer premium on-device speech when installed, then enhanced, then default.
+    /// Uses the currently selected system/Bluetooth audio route.
     func speakCompanion(_ text:String, style:String) {
         let trimmed = text.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         speaker.stopSpeaking(at:.immediate)
-        let utterance = AVSpeechUtterance(string:trimmed)
-        let voices = AVSpeechSynthesisVoice.speechVoices().filter {
-            $0.language.hasPrefix("en") && $0.quality == .enhanced
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord,mode:.default,
+                                    options:[.allowBluetoothHFP,.defaultToSpeaker])
+            try session.setActive(true)
+        } catch {
+            status = "Speech audio route unavailable: " + error.localizedDescription
         }
-        let preferred = voices.first(where: { voice in
-            style == "FRIDAY" ? voice.name.localizedCaseInsensitiveContains("Samantha") :
-                voice.name.localizedCaseInsensitiveContains("Ava")
-        }) ?? voices.first
-        utterance.voice = preferred ?? AVSpeechSynthesisVoice(language:"en-US")
-        utterance.rate = style == "FRIDAY" ? 0.48 : 0.51
-        utterance.pitchMultiplier = style == "FRIDAY" ? 1.08 : 0.98
-        utterance.preUtteranceDelay = 0.12
+        let utterance = AVSpeechUtterance(string:trimmed)
+        let candidates = AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language == "en-US" }
+        let best = candidates.sorted {
+            let l = ($0.quality == .premium ? 3 : ($0.quality == .enhanced ? 2 : 1))
+            let r = ($1.quality == .premium ? 3 : ($1.quality == .enhanced ? 2 : 1))
+            return l > r
+        }
+        utterance.voice = best.first ?? AVSpeechSynthesisVoice(language:"en-US")
+        utterance.rate = 0.51
+        utterance.pitchMultiplier = 1.0
+        utterance.preUtteranceDelay = 0.07
+        utterance.postUtteranceDelay = 0.08
         speaker.speak(utterance)
-        status = "Companion speaking through current iPhone audio route: " + audioRoute
+        let quality = utterance.voice?.quality == .premium ? "premium" :
+                      utterance.voice?.quality == .enhanced ? "enhanced" : "standard"
+        status = "Jarvis speaking via " + audioRoute + " (" +
+                 (utterance.voice?.name ?? "system voice") + ", " + quality + ")"
+    }
+
+    func stopSpeaking() {
+        speaker.stopSpeaking(at:.immediate)
     }
 
     func speak(_ text: String) {
