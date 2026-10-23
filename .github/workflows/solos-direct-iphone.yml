@@ -1,7 +1,7 @@
-name: Build Solos Direct iPhone IPA
+name: Build Jarvis HUD iPhone IPA
 on:
   push:
-    branches: [solos-iphone-direct-ai, solos-iphone-v4-stable-flip, solos-iphone-v6-stable-features, solos-iphone-v7-orientation-dashboard, solos-iphone-v8-handsfree, solos-iphone-v9-voice-navigation, solos-iphone-v10-background-voice, solos-iphone-v11-spoken-screen-answers, solos-iphone-v12-jarvis-hud, solos-iphone-v13-lock-bargein, solos-iphone-v14-speech-pause-background, solos-iphone-v15-lockscreen-stability, solos-iphone-v16-ai-recovery, solos-iphone-v17-reliable-answers, solos-iphone-v18-auto-rearm-wake, solos-iphone-v19-live-clock-date, solos-iphone-v20-hex-learning, solos-iphone-v21-captions-translation-messages, solos-iphone-v22-voice-message-control-reliability, solos-iphone-v23-performance-stability, solos-iphone-v24-fast-live-speech]
+    branches: [solos-iphone-direct-ai, solos-iphone-v4-stable-flip, solos-iphone-v6-stable-features, solos-iphone-v7-orientation-dashboard, solos-iphone-v8-handsfree, solos-iphone-v9-voice-navigation, solos-iphone-v10-background-voice, solos-iphone-v11-spoken-screen-answers, solos-iphone-v12-jarvis-hud, solos-iphone-v13-lock-bargein, solos-iphone-v14-speech-pause-background, solos-iphone-v15-lockscreen-stability, solos-iphone-v16-ai-recovery, solos-iphone-v17-reliable-answers, solos-iphone-v18-auto-rearm-wake, solos-iphone-v19-live-clock-date, solos-iphone-v20-hex-learning, solos-iphone-v21-captions-translation-messages, solos-iphone-v22-voice-message-control-reliability, solos-iphone-v23-performance-stability, solos-iphone-v24-fast-live-speech, jarvis-hud-first-ios-v25-20261022]
   workflow_dispatch:
 permissions:
   contents: read
@@ -43,6 +43,6 @@ jobs:
           unzip -t SolosDirect-iPhone-unsigned.ipa >/dev/null
       - uses: actions/upload-artifact@v4
         with:
-          name: SolosDirect-iPhone-IPA-unsigned
+          name: JarvisHUD-iPhone-IPA-unsigned
           path: SolosDirect-iPhone-unsigned.ipa
           if-no-files-found: error
