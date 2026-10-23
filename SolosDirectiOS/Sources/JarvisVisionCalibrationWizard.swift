@@ -10,7 +10,7 @@ struct JarvisVisionCalibrationWizard: View {
     @State private var eye: JarvisVisionEye = .right
     @State private var step = 0
     @State private var option = 0
-    @State private var working = JarvisVisionProfile.comfortable
+    @State private var working = JarvisVisionProfile.prescriptionStartingPoint(.right)
     @State private var undoProfiles = [JarvisVisionProfile]()
     @State private var undoOptions = [Int]()
     @State private var sample: UIImage?
@@ -53,6 +53,8 @@ struct JarvisVisionCalibrationWizard: View {
         .onAppear {
             if let active = UserDefaults.standard.string(forKey:"hudVisionActiveEye"),
                let selected = JarvisVisionEye(rawValue:active) { eye = selected }
+            working = JarvisVisionProfileStorage.read(eye) ??
+                JarvisVisionProfile.prescriptionStartingPoint(eye)
             showPattern()
         }
     }
@@ -62,8 +64,14 @@ struct JarvisVisionCalibrationWizard: View {
             Text("FIND WHAT YOUR EYE CAN READ")
                 .font(.headline.bold())
                 .foregroundStyle(.green)
-            Text("Show A, B and C individually. Look through your real Solos lens, then choose the easiest to read without halos. Wear your usual prescription lenses if you use them.")
+            Text("Prescription-aware large-type baseline. Show A, B and C individually. Look through your real Solos lens, then choose the easiest to read without halos. Wear your usual prescription lenses if you use them.")
                 .font(.subheadline)
+            Text("RECEIPT: \\(JarvisPrescription.forEye(eye).summary)")
+                .font(.caption.monospaced())
+                .foregroundStyle(.yellow)
+            Text("Principal meridians: \\(JarvisPrescription.forEye(eye).axis)° / \\(JarvisPrescription.forEye(eye).perpendicularMeridian)°. Spherical equivalent: \\(String(format:"%.2f",JarvisPrescription.forEye(eye).sphericalEquivalent)) D. These describe optical refraction, not software filter strengths.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             Text("The display cannot focus light differently for each eye. Profiles are alternatives for the eye actually viewing the HUD, not two simultaneous displays.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -201,7 +209,7 @@ struct JarvisVisionCalibrationWizard: View {
     }
 
     private func resetComparisons() {
-        working = .comfortable
+        working = JarvisVisionProfile.prescriptionStartingPoint(eye)
         undoProfiles.removeAll()
         undoOptions.removeAll()
         step = 0
@@ -222,7 +230,7 @@ struct JarvisVisionCalibrationWizard: View {
     private func goBack() {
         guard step > 0 else { return }
         step -= 1
-        working = undoProfiles.popLast() ?? .comfortable
+        working = undoProfiles.popLast() ?? JarvisVisionProfile.prescriptionStartingPoint(eye)
         option = undoOptions.popLast() ?? 0
         showPattern()
     }

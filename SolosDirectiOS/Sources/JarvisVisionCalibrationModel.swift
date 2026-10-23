@@ -10,6 +10,24 @@ enum JarvisVisionEye: String, CaseIterable, Identifiable {
     var label: String { self == .right ? "RIGHT • OD" : "LEFT • OS" }
 }
 
+/// Values transcribed from the user's January 2026 lab receipt; verify against
+/// a current signed prescription before ordering physical lenses.
+struct JarvisPrescription {
+    let sphere: Double
+    let cylinder: Double
+    let axis: Int
+    static func forEye(_ eye:JarvisVisionEye) -> Self {
+        eye == .right ? .init(sphere:-2.00,cylinder:-4.50,axis:15) :
+                        .init(sphere:-1.75,cylinder:-5.00,axis:160)
+    }
+    var sphericalEquivalent: Double { sphere + cylinder / 2 }
+    var perpendicularMeridian: Int { (axis + 90) % 180 }
+    var summary: String {
+        String(format:"SPH %.2f D • CYL %.2f D • AXIS %d°",
+               sphere,cylinder,axis)
+    }
+}
+
 enum JarvisVisionCalibrationStage: Int, CaseIterable {
     case letters = 0
     case contrast = 1
@@ -48,6 +66,20 @@ struct JarvisVisionProfile: Codable, Equatable {
     var thickText: Bool
     var highVisibility: Bool
     var directional: Int
+
+    /// A conservative accessibility STARTING POINT, not a calculation of
+    /// optical correction from diopters. The same defaults for both eyes
+    /// intentionally avoid pretending a pixel filter can correct refraction.
+    static func prescriptionStartingPoint(_ eye:JarvisVisionEye) -> Self {
+        var profile = comfortable
+        profile.textScale = 1.42
+        profile.contrast = 1.65
+        profile.brightness = 1.0
+        profile.sharpness = 0.08
+        profile.directional = 0
+        profile.thickText = true
+        return profile
+    }
 
     static let comfortable = JarvisVisionProfile(
         brightness:1.0,contrast:1.35,sharpness:0.12,
