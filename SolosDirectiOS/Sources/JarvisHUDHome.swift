@@ -63,6 +63,14 @@ struct JarvisHUDHome: View {
     @State private var ollamaKey = ""
     @State private var serperKey = ""
     @State private var aiBusy = false
+    @AppStorage("jarvisCompanionEnabled") private var companionEnabled = false
+    @AppStorage("jarvisCompanionAutoSupport") private var companionAutoSupport = false
+    @AppStorage("jarvisCompanionSpeak") private var companionSpeak = false
+    @State private var companionInput = ""
+    @State private var companionReply = "I'm here when you want to talk."
+    @State private var companionStatus = "Off until enabled"
+    @State private var companionBusy = false
+    @State private var companionLastResponse = Date.distantPast
     @State private var showConnection = false
     @State private var showSettings = false
     @AppStorage("hudVisionBrightness") private var hudBrightness = 1.0
@@ -146,6 +154,7 @@ struct JarvisHUDHome: View {
                     }
                     connectionSummary
                     if showConnection { connectionPanel }
+                    companionPanel
                     if showSettings { visionPanel; visionCalibrationPanel; settingsPanel }
                     Text("Actual glasses display needs an iOS-authorized accessory data connection. Pairing Bluetooth audio alone does not give this app OLED access.")
                         .font(.caption2).foregroundStyle(.orange)
@@ -233,6 +242,7 @@ struct JarvisHUDHome: View {
             }
         }
         .onChange(of: captions.latestFinal) { _, text in
+            considerCompanionTranscript(text)
             guard mode == 2 || mode == 3, !text.isEmpty else { return }
             if routeVoiceHUDCommand(text) { return }
             heard = text
@@ -711,6 +721,86 @@ struct JarvisHUDHome: View {
         }
     }
 
+    private var companionPanel: some View {
+        section("JARVIS COMPANION • SECOND OLLAMA PERSONA") {
+            Toggle("Enable emotional companion",isOn:$companionEnabled)
+            Toggle("Offer support when speech suggests distress",isOn:$companionAutoSupport)
+                .disabled(!companionEnabled)
+            Toggle("Speak companion replies aloud",isOn:$companionSpeak)
+                .disabled(!companionEnabled)
+            Text("Optional: uses the same Ollama server and model configured in Settings, but a separate supportive personality. No API key is needed for a local Ollama server.")
+                .font(.caption2).foregroundStyle(.secondary)
+            TextField("Tell Jarvis how you're feeling...",text:$companionInput,axis:.vertical)
+                .lineLimit(1...3).textFieldStyle(.roundedBorder)
+            Button("TALK TO COMPANION") { talkToCompanion(companionInput) }
+                .disabled(!companionEnabled || companionBusy || companionInput.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                .buttonStyle(.borderedProminent)
+            Text(companionBusy ? "Companion thinking..." : companionReply)
+                .font(.body)
+            Text(companionStatus).font(.caption2).foregroundStyle(.secondary)
+            Text("Automatic suggestions use finalized speech transcripts only while captions are active, with a cooldown. They cannot identify crying, gasping, laughter or your emotions reliably. The companion does not listen secretly, analyze calls or interrupt videos. Turn it off anytime.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func considerCompanionTranscript(_ transcript:String) {
+        guard companionEnabled, companionAutoSupport, !companionBusy,
+              Date().timeIntervalSince(companionLastResponse) > 180,
+              !musicOnHUD, mode == 2 else { return }
+        let lower = transcript.lowercased()
+        let signals = ["i'm frustrated","i am frustrated","i'm sad","i am sad",
+                       "i feel alone","i'm overwhelmed","i am overwhelmed",
+                       "i need someone to talk to","i'm upset","i am upset"]
+        guard signals.contains(where:lower.contains) else { return }
+        talkToCompanion("I said: " + String(transcript.prefix(350)) +
+                        ". Offer one brief, gentle, non-assumptive response.")
+    }
+
+    private func companionOverlay(_ original:UIImage) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size:CGSize(width:428,height:240),format:format).image { ctx in
+            original.draw(in:CGRect(x:0,y:0,width:428,height:240))
+            UIColor(red:0.02,green:0.14,blue:0.18,alpha:0.98).setFill()
+            ctx.fill(CGRect(x:0,y:90,width:428,height:150))
+            ("JARVIS COMPANION" as NSString).draw(
+                in:CGRect(x:12,y:96,width:405,height:27),
+                withAttributes:[.font:UIFont.systemFont(ofSize:18,weight:.heavy),
+                                .foregroundColor:UIColor.cyan])
+            (companionReply as NSString).draw(
+                in:CGRect(x:12,y:128,width:405,height:107),
+                withAttributes:[.font:UIFont.systemFont(ofSize:22,weight:.bold),
+                                .foregroundColor:UIColor.white])
+        }
+    }
+
+    private func talkToCompanion(_ text:String) {
+        guard companionEnabled, !companionBusy else { return }
+        companionBusy = true
+        companionLastResponse = Date()
+        companionStatus = "Contacting Ollama companion..."
+        let server = ollamaServer, model = ollamaModel, key = ollamaKey
+        Task {
+            do {
+                let reply = try await JarvisOllama.companionReply(text,baseURL:server,model:model,apiKey:key)
+                await MainActor.run {
+                    companionReply = reply
+                    companionStatus = "Companion replied"
+                    companionBusy = false
+                    if companionSpeak && !musicOnHUD && mode != 2 && mode != 3 {
+                        accessory.speak(reply)
+                    }
+                    drawHUD()
+                }
+            } catch {
+                await MainActor.run {
+                    companionBusy = false
+                    companionStatus = "Companion unavailable: " + error.localizedDescription
+                }
+            }
+        }
+    }
+
     private var settingsPanel: some View {
         section("AI • PRIVACY • SPEECH") {
             Toggle("Online Ollama (off = iPhone on-device AI)",isOn:$online)
@@ -1129,7 +1219,9 @@ struct JarvisHUDHome: View {
             speed:phone.speed,battery:phone.battery,gps:phone.coordinates,
             message:text,detail:detail,sender:sender,
             senderPhoto:senderPhoto,messagePage:currentMessagePage + 1,pageCount:messagePages.count)
-        let tuned = weatherGuardian.overlay(JarvisHUDVision.apply(to:output))
+        let companionFrame = companionEnabled && Date().timeIntervalSince(companionLastResponse) < 35 &&
+            companionStatus == "Companion replied" ? companionOverlay(output) : output
+        let tuned = weatherGuardian.overlay(JarvisHUDVision.apply(to:companionFrame))
         image = tuned
         // sendHUDImage drops obsolete ordinary frames while busy. No new BLE
         // transport is fabricated if iOS does not expose an accessory session.

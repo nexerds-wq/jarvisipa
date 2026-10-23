@@ -54,6 +54,44 @@ enum JarvisOllama {
         return answer
     }
 
+    /// Separate companion persona. Only user-enabled, finalized transcripts are sent.
+    static func companionReply(_ observation:String, baseURL:String, model:String, apiKey:String) async throws -> String {
+        let root = baseURL.trimmingCharacters(in:.whitespacesAndNewlines)
+            .trimmingCharacters(in:CharacterSet(charactersIn:"/"))
+        guard let url = URL(string:root + "/api/chat"),
+              ["http","https"].contains(url.scheme?.lowercased() ?? "") else { throw Failure.invalidURL }
+        var request = URLRequest(url:url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 45
+        request.setValue("application/json",forHTTPHeaderField:"Content-Type")
+        if !apiKey.isEmpty { request.setValue("Bearer " + apiKey,forHTTPHeaderField:"Authorization") }
+        let instructions = """
+        You are Jarvis Companion, a warm, grounded conversational AI speaking through smart glasses.
+        Respond like a considerate person, naturally, in at most two short sentences.
+        The user has opted into emotional support. A transcript does NOT prove an emotion:
+        never claim to detect crying, laughter, anger, threats or private relationships from audio.
+        When uncertain, ask a gentle question rather than guessing.
+        Do not intrude on conversations, phone calls, music, videos or arguments.
+        Avoid unsolicited comments on other people's private conversations.
+        Do not encourage emotional dependence or imply you are human.
+        Be empathetic without flattery or judgment. If a user describes immediate danger,
+        encourage contacting emergency services or a trusted nearby person.
+        """
+        request.httpBody = try JSONSerialization.data(withJSONObject:[
+            "model":model,"stream":false,
+            "messages":[["role":"system","content":instructions],
+                        ["role":"user","content":observation]]
+        ])
+        let (data,response) = try await URLSession.shared.data(for:request)
+        guard let http = response as? HTTPURLResponse else { throw Failure.emptyAnswer }
+        guard (200..<300).contains(http.statusCode) else { throw Failure.badResponse(http.statusCode) }
+        let object = try JSONSerialization.jsonObject(with:data) as? [String:Any]
+        let message = object?["message"] as? [String:Any]
+        let reply = (message?["content"] as? String ?? "").trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !reply.isEmpty else { throw Failure.emptyAnswer }
+        return String(reply.prefix(500))
+    }
+
     private static func googleContext(query: String, key: String) async throws -> String {
         guard let url = URL(string: "https://google.serper.dev/search") else { return "" }
         var req = URLRequest(url:url)
