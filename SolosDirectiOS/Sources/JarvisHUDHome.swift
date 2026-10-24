@@ -150,6 +150,14 @@ struct JarvisHUDHome: View {
                 }
             }
         }
+        .overlay {
+            JarvisVoiceBorder(level:phone.microphoneLevel,
+                              speaking:phone.jarvisVoiceActive,
+                              listening:phone.listening)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
     }
 
     @ViewBuilder private var weatherAlertStrip: some View {
@@ -1660,5 +1668,39 @@ struct JarvisHUDHome: View {
     private func formatRemaining(_ end:Date) -> String {
         let seconds = max(0,Int(end.timeIntervalSinceNow))
         return String(format:"%02d:%02d",seconds / 60,seconds % 60)
+    }
+}
+
+
+// The border belongs to the Jarvis app window. iOS does not allow a
+// persistent third-party overlay above the Home Screen or other apps.
+private struct JarvisVoiceBorder: View {
+    let level: Double
+    let speaking: Bool
+    let listening: Bool
+    @State private var breathing = false
+
+    private var tint: Color {
+        speaking ? Color(red:1.0,green:0.43,blue:0.08) :
+        Color(red:0.06,green:0.53,blue:1.0)
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let strength = speaking ? (breathing ? 0.95 : 0.55) :
+                           (listening ? min(1.0,0.18 + level * 0.82) : 0.06)
+            let corner = min(55.0,geometry.size.width * 0.12)
+            RoundedRectangle(cornerRadius:corner,style:.continuous)
+                .stroke(tint.opacity(0.35 + strength * 0.65),
+                        lineWidth:2.5 + strength * 2.0)
+                .shadow(color:tint.opacity(strength * 0.9),
+                        radius:5 + strength * 15)
+                .padding(3)
+                .animation(.easeOut(duration:0.12),value:level)
+                .animation(.easeInOut(duration:0.35),value:speaking)
+        }
+        .onAppear { breathing = true }
+        .animation(.easeInOut(duration:0.45).repeatForever(autoreverses:true),
+                   value:breathing)
     }
 }

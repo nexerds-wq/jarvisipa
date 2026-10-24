@@ -14,6 +14,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     @Published var transcribed = ""
     var onHUDVoiceCommand: ((String) -> Bool)?
     @Published var voiceStatus = "Not listening"
+    @Published private(set) var microphoneLevel: Double = 0
+    @Published private(set) var jarvisVoiceActive = false
     @Published var listening = false
     @Published var discoveredBLE = [String]()
     @Published var bleState = "Bluetooth scan not started"
@@ -36,6 +38,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     // exception (not caught by Swift do/catch). Captions take mic ownership
     // often, including before the wake recognizer has ever started.
     private var wakeAudioTapInstalled = false
+    private let meterLock = NSLock()
+    private var lastMeterPublish = Date.distantPast
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var speechTask: SFSpeechRecognitionTask?
     private let recognitionRequestLock = NSLock()
@@ -68,6 +72,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                 // another utterance starts. Do not tear down the new answer.
                 guard !self.accessory.isSpeaking else { return }
                 self.awaitingSpeechCompletion = false
+                self.jarvisVoiceActive = false
                 guard self.continuousWakeWanted else { return }
                 self.voiceStatus = "Answer finished — restoring Hey Jarvis listening"
                 self.scheduleWakeRearm(after:0.6)
@@ -423,6 +428,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             self.voiceStatus = "Audio route: \(error.localizedDescription)"
         }
         self.awaitingSpeechCompletion = true
+        self.jarvisVoiceActive = true
         self.speechStartedAt = Date()
         self.accessory.speak(response)
         if bargeIn && self.continuousWakeWanted {
@@ -683,6 +689,31 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                 self.recognitionRequestLock.lock()
                 self.recognitionRequest?.append(buffer)
                 self.recognitionRequestLock.unlock()
+                // Meter the existing mic tap; do not install a second tap or
+                // reconfigure the Bluetooth audio route just for visuals.
+                guard let channel = buffer.floatChannelData?[0] else { return }
+                let frames = Int(buffer.frameLength)
+                guard frames > 0 else { return }
+                var power: Float = 0
+                let strideSize = max(1, frames / 128)
+                var samples = 0
+                for index in stride(from:0,to:frames,by:strideSize) {
+                    power += channel[index] * channel[index]
+                    samples += 1
+                }
+                let rms = sqrt(power / Float(max(1,samples)))
+                let level = min(1.0, max(0.0, Double(rms) * 11.0))
+                self.meterLock.lock()
+                let now = Date()
+                let publish = now.timeIntervalSince(self.lastMeterPublish) >= 0.08
+                if publish { self.lastMeterPublish = now }
+                self.meterLock.unlock()
+                if publish {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.listening else { return }
+                        self.microphoneLevel = self.microphoneLevel * 0.45 + level * 0.55
+                    }
+                }
             }
             wakeAudioTapInstalled = true
             audioEngine.prepare()
@@ -855,6 +886,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         speechTask?.cancel()
         speechTask = nil
         listening = false
+        microphoneLevel = 0
         voiceStatus = "Not listening"
     }
 }
