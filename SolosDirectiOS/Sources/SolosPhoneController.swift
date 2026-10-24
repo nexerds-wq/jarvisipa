@@ -412,7 +412,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             let audio = AVAudioSession.sharedInstance()
             if bargeIn {
                 try audio.setCategory(.playAndRecord, mode:.default,
-                                      options:[.mixWithOthers,.allowBluetoothA2DP,.defaultToSpeaker])
+                                      options:[.mixWithOthers,.allowBluetoothHFP,.defaultToSpeaker])
             } else {
                 try audio.setCategory(.playback, mode:.spokenAudio,
                                       options:[.mixWithOthers,.allowBluetoothA2DP])
@@ -641,18 +641,29 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             let audio = AVAudioSession.sharedInstance()
             try audio.setCategory(.playAndRecord, mode:.default,
                                        options:[.mixWithOthers,.allowBluetoothHFP,.defaultToSpeaker])
-            // User requested the Solos microphone exclusively. HFP is required
-            // for Bluetooth microphone capture; never silently use iPhone mic.
-            guard let solosMic = audio.availableInputs?.first(where:{
-                $0.portType == .bluetoothHFP &&
-                ($0.portName.localizedCaseInsensitiveContains("Solos") ||
-                 $0.uid.localizedCaseInsensitiveContains("Solos"))
-            }) else {
-                voiceStatus = "Solos microphone unavailable • connect Solos headset audio in iPhone Settings"
+            // Works with any paired HFP headset, even without Solos HUD.
+            // iOS selects the playback route; it does not offer independent
+            // output devices for music and Jarvis inside one audio session.
+            let preference = UserDefaults.standard.string(forKey:"jarvisMicrophoneSource") ?? "bluetooth"
+            let inputs = audio.availableInputs ?? []
+            let selected: AVAudioSessionPortDescription?
+            if preference == "iphone" {
+                selected = inputs.first(where:{$0.portType == .builtInMic})
+            } else if preference == "solos" {
+                selected = inputs.first(where:{
+                    $0.portType == .bluetoothHFP &&
+                    ($0.portName.localizedCaseInsensitiveContains("Solos") ||
+                     $0.uid.localizedCaseInsensitiveContains("Solos"))
+                })
+            } else {
+                selected = inputs.first(where:{$0.portType == .bluetoothHFP})
+            }
+            guard let selected else {
+                voiceStatus = "Selected microphone unavailable. Pair a Bluetooth headset with microphone or select iPhone mic."
                 startingRecognition = false
                 return
             }
-            try audio.setPreferredInput(solosMic)
+            try audio.setPreferredInput(selected)
             try audio.setActive(true, options: .notifyOthersOnDeactivation)
             let node = audioEngine.inputNode
             let format = node.outputFormat(forBus: 0)
@@ -678,7 +689,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             try audioEngine.start()
             listening = true
             recognizerStartedAt = Date()
-            voiceStatus = "Microphone active — listening for Hey Jarvis"
+            voiceStatus = "Listening for Hey Jarvis • " + selected.portName
             // Rotate only the speech recognizer, keeping the microphone stream
             // running and the audio route stable for Apple Music.
             scheduleWakeTaskRotation(generation:generation)

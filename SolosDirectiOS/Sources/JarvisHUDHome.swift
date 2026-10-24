@@ -111,6 +111,7 @@ struct JarvisHUDHome: View {
     @State private var visionDiagnosticActive = false
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
     @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = false
+    @AppStorage("jarvisMicrophoneSource") private var microphoneSource = "bluetooth"
     @State private var speakReplies = true
     @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = true
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -1037,7 +1038,17 @@ struct JarvisHUDHome: View {
             Text("Keeps the microphone active when iOS permits. iOS may pause speech in the background, and a force-close stops it. Siri Shortcuts remains the lock-screen fallback.")
                 .font(.caption2).foregroundStyle(.secondary)
             Toggle("Allow online speech recognition",isOn:$allowOnlineRecognition)
-            Toggle("Use iPhone microphone instead of Bluetooth headset mic",isOn:$preferPhoneMicrophone)
+            Picker("Jarvis microphone",selection:$microphoneSource) {
+                Text("Any Bluetooth headset").tag("bluetooth")
+                Text("Solos only").tag("solos")
+                Text("iPhone").tag("iphone")
+            }
+            .onChange(of:microphoneSource) { _, _ in
+                phone.stopListening()
+                if keepJarvisListening { phone.startListening() }
+            }
+            Text("No Solos HUD required: AI voice replies play through the current iOS audio output. Choose your music headset in Control Center. iOS may move audio to the mic headset during listening.")
+                .font(.caption2).foregroundStyle(.secondary)
             Text("For a speaker 8–10 feet away, point the iPhone microphone toward them and reduce room noise. No software setting guarantees speech recognition at that distance.")
                 .font(.caption2).foregroundStyle(.secondary)
             Text("Ollama must run on your computer or reachable server. A local Wi-Fi model works without outside internet, but iPhone-only offline answers use Apple's supported on-device model.")
