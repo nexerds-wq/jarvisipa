@@ -82,9 +82,10 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var silenceTask: Task<Void, Never>?
     private var recognitionCycle: UInt64 = 0
     private var lastSpeechUpdate = Date.distantPast
+    private var lastVisibleReplyUpdate = Date.distantPast
     private let musicPlayer = MPMusicPlayerController.systemMusicPlayer
 
-    private var englishVoices: [AVSpeechSynthesisVoice] {
+    private lazy var englishVoices: [AVSpeechSynthesisVoice] = {
         AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.lowercased().hasPrefix("en") }
             .sorted { left, right in
@@ -96,7 +97,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 }
                 return left.name.localizedStandardCompare(right.name) == .orderedAscending
             }
-    }
+    }()
 
     var availableVoices: [String] { ["Automatic"] + englishVoices.map(\.identifier) }
 
@@ -285,6 +286,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         if handlePhoneCommand(prompt) { scheduleRestart(); return }
         heardText = prompt
         reply = ""
+        lastVisibleReplyUpdate = .distantPast
         spokenPrefixCount = 0
         startedSpeakingReply = false
         isGenerating = true
@@ -296,12 +298,23 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             guard let self else { return }
             do {
                 let stream = currentSession.streamResponse(to: prompt)
+                var currentResponse = ""
                 for try await fragment in stream {
+                    currentResponse = fragment.content
                     try Task.checkCancellation()
-                    self.reply = fragment.content
-                    self.speakFirstSentenceWhenReady()
-                    self.status = "Responding on-device..."
+                    // The local model streams many tiny fragments. Avoid triggering
+                    // a full SwiftUI redraw for every fragment on the main actor.
+                    let now = Date()
+                    if now.timeIntervalSince(self.lastVisibleReplyUpdate) >= 0.12 {
+                        self.reply = fragment.content
+                        self.lastVisibleReplyUpdate = now
+                    }
+                    self.speakFirstSentenceWhenReady(from: fragment.content)
+                    if self.status != "Responding on-device..." {
+                        self.status = "Responding on-device..."
+                    }
                 }
+                self.reply = currentResponse
                 self.speakRemainingReply()
                 self.isGenerating = false
                 self.status = self.synthesizer.isSpeaking ? "JARVIS is speaking..." : "Ready for another question."
@@ -322,9 +335,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
     // Start talking as soon as the first sentence arrives instead of waiting for
     // the entire local model response. Keep at most two utterances per reply.
-    private func speakFirstSentenceWhenReady() {
+    private func speakFirstSentenceWhenReady(from text: String) {
         guard speakReplies, !startedSpeakingReply else { return }
-        let chars = Array(reply)
+        let chars = Array(text)
         guard let boundary = chars.indices.first(where: { i in
             ".!?".contains(chars[i]) && (i + 1 == chars.count || chars[i + 1].isWhitespace)
         }) else { return }
@@ -435,7 +448,26 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     }
 
     private func handlePhoneCommand(_ prompt: String) -> Bool {
-        let lower = prompt.lowercased()
+        let lower = prompt.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        // Local, instant answers: no language-model inference needed.
+        if lower.range(of: #"^(hey (jarvis|aura)[, ]*)?(what('?s| is) )?(the )?(current )?time( is it)?[?.! ]*$"#, options: .regularExpression) != nil {
+            let formatter = DateFormatter()
+            formatter.timeStyle = .short
+            formatter.dateStyle = .none
+            reply = "It's " + formatter.string(from: Date())
+            speakFullReply()
+            if !synthesizer.isSpeaking { scheduleRestart() }
+            return true
+        }
+        if lower.range(of: #"^(hey (jarvis|aura)[, ]*)?(what('?s| is) )?(today('?s)? |the )?(date|day)( today| is it)?[?.! ]*$"#, options: .regularExpression) != nil {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .full
+            formatter.timeStyle = .none
+            reply = "Today is " + formatter.string(from: Date())
+            speakFullReply()
+            if !synthesizer.isSpeaking { scheduleRestart() }
+            return true
+        }
         if lower.contains("pause music") || lower.contains("stop music") { musicPlayer.pause(); reply = "Music paused."; return true }
         if lower.contains("next song") || lower.contains("skip song") { musicPlayer.skipToNextItem(); reply = "Skipping."; return true }
         if lower.contains("previous song") { musicPlayer.skipToPreviousItem(); reply = "Going back."; return true }
