@@ -61,7 +61,7 @@ struct AuraContentView: View {
             Circle()
                 .fill(
                     RadialGradient(colors: [
-                        (voice.isListening ? .orange : .cyan).opacity(0.43),
+                        (voice.isListening ? Color.orange : Color.cyan).opacity(0.43),
                         Color(red: 0.04, green: 0.16, blue: 0.29).opacity(0.35),
                         .clear
                     ], center: .center, startRadius: 0, endRadius: 93)
