@@ -1,0 +1,14 @@
+node_modules/
+.expo/
+.env
+dist/
+ios/
+android/
+*.ipa
+*.log
+models/
+.venv/
+__pycache__/
+*.pyc
+
+

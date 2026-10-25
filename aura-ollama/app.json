@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "AURA Local Voice",
+    "slug": "aura-local-voice",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.auralocalvoice",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "AURA sends audio to your computer's free local voice models.",
+        "NSMicrophoneUsageDescription": "AURA needs the microphone for live two-way voice conversations.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
+    },
+    "plugins": [
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "microphonePermission": "Allow AURA to listen during your local conversation.",
+          "cameraPermission": "AURA does not use the camera."
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}
+
