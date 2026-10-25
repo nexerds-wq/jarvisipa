@@ -139,7 +139,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         synthesizer.stopSpeaking(at: .immediate)
         stopMicrophone()
         heardText = ""
-        status = "Listening on this iPhone... Tap Finish when you're done."
+        recognitionCycle &+= 1
+        let cycle = recognitionCycle
+        status = handsFree ? "Listening for Hey Jarvis or Hey AURA..." : "Listening... Tap Finish when done."
 
         do {
             let audio = AVAudioSession.sharedInstance()
