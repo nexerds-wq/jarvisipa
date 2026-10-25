@@ -78,6 +78,9 @@ enum AuraPersonality: String, CaseIterable, Identifiable {
 final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     @Published var status = "Checking the on-device AI model..."
     @Published var modelReady = false
+    // This tracks actual microphone hardware, not the short-lived recognition task.
+    // Keeping it separate prevents the interface from flashing on every renewal.
+    @Published private(set) var microphoneActive = false
     @Published var isListening = false
     @Published var isGenerating = false
     @Published var heardText = ""
@@ -109,6 +112,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var microphoneAuthorized = false
     private var permissionRequestInFlight = false
     private var consecutiveMicFailures = 0
+    private var recognitionStartedAt = Date.distantPast
+    private var routeRecoveryTask: Task<Void, Never>?
     private var spokenPrefixCount = 0
     private var startedSpeakingReply = false
     private var queuedSpeechCount = 0
@@ -206,7 +211,10 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     }
 
     private func ensureAudioInput() throws {
-        if audioEngine.isRunning { return }
+        if audioEngine.isRunning {
+            if !microphoneActive { microphoneActive = true }
+            return
+        }
         let audio = AVAudioSession.sharedInstance()
         try audio.setCategory(.playAndRecord, mode: .default,
                               options: [.defaultToSpeaker, .allowBluetoothA2DP, .mixWithOthers])
@@ -228,13 +236,14 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         }
         audioEngine.prepare()
         try audioEngine.start()
+        microphoneActive = true
     }
 
     private func startListening() {
         guard !isGenerating, queuedSpeechCount == 0, !synthesizer.isSpeaking else { return }
         guard !isListening else { return }
         guard let recognizer, recognizer.isAvailable else {
-            status = "Speech recognition isn't available. I'll retry automatically."
+            if consecutiveMicFailures >= 2 { status = "Speech recognition unavailable. Retrying automatically..." }
             consecutiveMicFailures += 1
             scheduleRestart()
             return
@@ -258,10 +267,10 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             recognitionRequest = request
             audioBridge.setRequest(request)
             isListening = true
-            status = handsFree
-                ? (followUpReady ? "Conversation open. Talk naturally..." : "Listening for Hey Jarvis...")
-                : "Listening... Tap to send."
+            let readyStatus = followUpReady ? "Conversation open. Talk naturally..." : "Listening for Hey Jarvis..."
+            if status != readyStatus { status = readyStatus }
 
+            recognitionStartedAt = Date()
             recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
                 Task { @MainActor [weak self] in
                     guard let self, self.isListening, self.recognitionCycle == cycle else { return }
@@ -285,14 +294,22 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                         }
                     }
                     if let error {
+                        // A quick failure can be a transient audio-route race. Do not
+                        // clear the failure counter until a cycle actually stays stable.
+                        if Date().timeIntervalSince(self.recognitionStartedAt) >= 8 {
+                            self.consecutiveMicFailures = 0
+                        }
                         self.consecutiveMicFailures += 1
-                        self.status = "Speech recognition renewing: \(error.localizedDescription)"
+                        if self.consecutiveMicFailures >= 3 {
+                            self.status = "Speech recognition reconnecting: \(error.localizedDescription)"
+                        }
                         self.stopRecognition()
                         self.scheduleRestart()
                     }
                 }
             }
-            consecutiveMicFailures = 0
+            // Don't reset the backoff here: a recognition task can fail
+            // immediately after creation, causing a high-frequency restart loop.
 
             // iOS limits individual recognition tasks. Renew the recognizer while
             // retaining the already-running microphone engine and audio tap.
@@ -372,6 +389,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private func stopAudioInput() {
         audioBridge.setRequest(nil)
         if audioEngine.isRunning { audioEngine.stop() }
+        microphoneActive = false
         if hasMicrophoneTap {
             audioEngine.inputNode.removeTap(onBus: 0)
             hasMicrophoneTap = false
@@ -412,9 +430,19 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
     @objc private func audioRouteChanged(_ notification: Notification) {
         guard handsFree else { return }
-        stopRecognition()
-        stopAudioInput()
-        scheduleRestart()
+        guard let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+        // Calling setCategory and changing output volume can emit route-change
+        // notifications. Restarting for those causes a mic-on / mic-off loop.
+        guard reason == .oldDeviceUnavailable || reason == .newDeviceAvailable else { return }
+        routeRecoveryTask?.cancel()
+        routeRecoveryTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let self, self.handsFree else { return }
+            self.stopRecognition()
+            self.stopAudioInput()
+            self.scheduleRestart()
+        }
     }
 
     func send(_ message: String) {
