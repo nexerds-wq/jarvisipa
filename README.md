@@ -24,11 +24,12 @@ The existing `JarvisGlasses/` folder remains in this repository as an older sepa
 ## Voice reply and reactive outlines (V28)
 
 - A **blue inner outline** vibrates with actual iPhone/headset microphone energy when you are talking. An independent **orange outer outline** pulses while the iOS speech synthesizer is actually speaking. Both remain faint while idle. Reduce Motion keeps the outlines static.
-- You can say **"Hey Jarvis"**, wait for **"Yes, I'm listening"**, and then ask your question without repeating the wake phrase (within 12 seconds). You can also say **"Hey Jarvis, what time is it?"** in one sentence.
+- You can say **"Hey Jarvis"**, wait for **"Yes, I'm listening"**, and then ask your question without repeating the wake phrase (within 12 seconds). You can also say **"Hey Jarvis, what time is it?"** in one sentence. Wake-only phrases from the separate captions/conversation mode use the same acknowledgement.
 - Jarvis temporarily pauses microphone capture while replying, then resumes listening if continuous wake is enabled. This prevents Jarvis from recognizing its own speech as a new question.
 - The **Any Bluetooth headset** microphone option now falls back to the iPhone microphone when no Bluetooth headset microphone is available. Selecting **Solos only** still requires that specific microphone.
 - Jarvis shows its microphone status and last recognized words on the main screen. In Advanced settings, keep **Speak Jarvis answers** enabled for audible responses. If offline speech recognition isn't installed, enable online recognition deliberately or download a language pack; the app does not silently enable cloud speech.
 - Local AI questions require an iOS 26 device with Apple Intelligence ready. If the model is unavailable or fails, Jarvis now gives a brief spoken explanation rather than leaving you with silence. For time and date questions, Jarvis uses the iPhone clock directly.
+- If a configured Ollama conversation server cannot be reached, Jarvis reports the connection problem and tries the iPhone's local AI path. It does not pretend that an unavailable server answered.
 
 **Test after sideloading:** Open Jarvis, allow Microphone and Speech Recognition, check the voice-status text, say "Hey Jarvis" and wait for its spoken acknowledgement. Ask "What time is it?" and watch the blue ring while you speak and orange ring while Jarvis replies. Use the **VOICE TEST** button if audio is still silent, then verify the iPhone/Bluetooth audio output in Control Center. The outlines are only visible inside this app; iOS does not allow a third-party always-on outline over the Home Screen or other apps. A successful unsigned IPA build does not prove microphone or Bluetooth hardware behavior on a physical phone.
 

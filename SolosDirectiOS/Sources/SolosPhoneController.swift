@@ -590,7 +590,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         // Guard asynchronous permission callbacks to prevent two overlapping
         // audio-engine taps or stale callbacks restarting after STOP.
         continuousWakeWanted = true
-        guard !awaitingSpeechCompletion, !accessory.isSpeaking else { return }
+        guard !asking, !awaitingSpeechCompletion, !accessory.isSpeaking else { return }
         guard !listening, !startingRecognition else { return }
         startingRecognition = true
         let expectedGeneration = recognitionGeneration
@@ -841,7 +841,17 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
               pendingVoiceQuestion.isEmpty else { return }
         questionSilenceWork?.cancel()
         questionSilenceWork = nil
-        let shouldResume = continuousWakeWanted
+        openFollowUpConversation(forceListening:false)
+    }
+
+    // Caption mode uses a different recognizer. A wake-only phrase there
+    // transfers microphone ownership back to this conversation listener.
+    func acknowledgeWakeFromCaptions() {
+        openFollowUpConversation(forceListening:true)
+    }
+
+    private func openFollowUpConversation(forceListening:Bool) {
+        let shouldResume = continuousWakeWanted || forceListening
         stopListening()
         continuousWakeWanted = shouldResume
         guard shouldResume else { return }

@@ -1039,7 +1039,21 @@ struct JarvisHUDHome: View {
             } catch {
                 await MainActor.run {
                     companionBusy = false
-                    companionStatus = "Companion unavailable: " + error.localizedDescription
+                    companionStatus = "Ollama unavailable — trying iPhone AI: " + error.localizedDescription
+                    // When the configured conversation server is down,
+                    // try the local iPhone model and its spoken error
+                    // guidance. Never make a failed network call look like
+                    // a successful Ollama answer.
+                    if mode == 2 {
+                        captions.stop()
+                        jarvisSpeaking = speakReplies
+                    }
+                    phone.ask(text)
+                    if mode == 2 && !speakReplies {
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.35) {
+                            if mode == 2 && !captions.isListening { startCaptioning() }
+                        }
+                    }
                 }
             }
         }
@@ -1199,9 +1213,13 @@ struct JarvisHUDHome: View {
     // in its transcript rather than starting a competing audio engine.
     private func handleCaptionWakePhrase(_ transcript:String,isFinal:Bool) -> Bool {
         let lower = transcript.lowercased()
-        guard let range = lower.range(of:"hey jarvis") ?? lower.range(of:"oye jarvis") else { return false }
-        let question = String(transcript[range.upperBound...]).trimmingCharacters(in:.whitespacesAndNewlines)
-        guard !question.isEmpty else { return true }
+        let question: String
+        if let englishQuestion = JarvisWakePhrase.question(afterWakeIn:transcript) {
+            question = englishQuestion
+        } else if let range = lower.range(of:"oye jarvis") {
+            question = String(transcript[range.upperBound...]).trimmingCharacters(
+                in:.whitespacesAndNewlines.union(.punctuationCharacters))
+        } else { return false }
         // Respond after brief silence even if iOS never returns isFinal.
         // Reset on each changed partial so the actual question is preserved.
         captionWakeWork?.cancel()
@@ -1213,6 +1231,15 @@ struct JarvisHUDHome: View {
             return true
         }
         captionWakeWork = nil
+        if question.isEmpty {
+            guard lastCaptionWakeCommand != "<wake-only>" ||
+                  Date().timeIntervalSince(lastCaptionWakeAt) > 4 else { return true }
+            lastCaptionWakeCommand = "<wake-only>"
+            lastCaptionWakeAt = Date()
+            handsFree.setMode(0,force:true)
+            phone.acknowledgeWakeFromCaptions()
+            return true
+        }
         guard question != lastCaptionWakeCommand ||
               Date().timeIntervalSince(lastCaptionWakeAt) > 8 else { return true }
         lastCaptionWakeCommand = question
