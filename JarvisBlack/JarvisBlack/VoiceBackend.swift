@@ -49,7 +49,7 @@ final class VoiceBackend {
         let data = try await post("chat", body: Payload(message: command, history: history))
         let decoded = try JSONDecoder().decode(ServerResponse.self, from: data)
         return VoiceReply(text: decoded.reply,
-                          audio: decoded.audioBase64.flatMap(Data.init(base64Encoded:)))
+                          audio: decoded.audioBase64.flatMap { Data(base64Encoded: $0) })
     }
 
     func synthesize(_ text: String) async -> VoiceReply {
@@ -58,7 +58,7 @@ final class VoiceBackend {
             let data = try await post("speak", body: Payload(text: text))
             let decoded = try JSONDecoder().decode(SpeechResponse.self, from: data)
             return VoiceReply(text: text,
-                              audio: decoded.audioBase64.flatMap(Data.init(base64Encoded:)))
+                              audio: decoded.audioBase64.flatMap { Data(base64Encoded: $0) })
         } catch {
             return VoiceReply(text: text, audio: nil)
         }
