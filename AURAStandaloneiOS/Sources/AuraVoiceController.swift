@@ -75,6 +75,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var generationTask: Task<Void, Never>?
     private var hasMicrophoneTap = false
     private var microphoneAuthorized = false
+    private var consecutiveMicFailures = 0
     private var spokenPrefixCount = 0
     private var startedSpeakingReply = false
     private var restartTask: Task<Void, Never>?
@@ -179,8 +180,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         do {
             let audio = AVAudioSession.sharedInstance()
             try audio.setCategory(.playAndRecord, mode: .default,
-                                  options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
-            try audio.setActive(true, options: .notifyOthersOnDeactivation)
+                                  options: [.defaultToSpeaker, .allowBluetoothA2DP, .mixWithOthers])
+            try audio.setActive(true)
 
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
@@ -190,7 +191,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
             recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
                 Task { @MainActor [weak self] in
-                    guard let self, self.isListening else { return }
+                    guard let self, self.isListening, self.recognitionCycle == cycle else { return }
                     if let result {
                         let incoming = result.bestTranscription.formattedString
                         if incoming != self.heardText {
@@ -201,7 +202,10 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                         if self.handsFree && result.isFinal { self.finishListeningAndRespond() }
                     }
                     if let error {
-                        self.status = "Listening ended: \(error.localizedDescription). Tap to try again."
+                        // Ignore callbacks from an intentionally cancelled recognition task.
+                        guard self.recognitionCycle == cycle else { return }
+                        self.status = "Mic reconnecting: \(error.localizedDescription)"
+                        self.consecutiveMicFailures += 1
                         self.stopMicrophone()
                         self.scheduleRestart()
                     }
@@ -220,6 +224,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             audioEngine.prepare()
             try audioEngine.start()
             isListening = true
+            consecutiveMicFailures = 0
             if handsFree {
                 Task { [weak self] in
                     try? await Task.sleep(for: .seconds(48))
@@ -229,7 +234,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             }
         } catch {
             stopMicrophone()
-            status = "Couldn't start the mic: \(error.localizedDescription)"
+            consecutiveMicFailures += 1
+            status = "Mic reconnecting: \(error.localizedDescription)"
+            scheduleRestart()
         }
     }
 
@@ -377,7 +384,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         do {
             let audio = AVAudioSession.sharedInstance()
             try audio.setCategory(.playAndRecord, mode: .default,
-                                  options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
+                                  options: [.defaultToSpeaker, .allowBluetoothA2DP, .mixWithOthers])
             try audio.setActive(true)
         } catch {
             status = "Audio output issue: \(error.localizedDescription)"
@@ -434,14 +441,15 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     func setHandsFree(_ enabled: Bool) {
         handsFree = enabled
         restartTask?.cancel()
-        if enabled { authorizeMicrophone() } else { stopMicrophone() }
+        if enabled { consecutiveMicFailures = 0; authorizeMicrophone() } else { stopMicrophone() }
     }
 
     private func scheduleRestart() {
         guard handsFree, !isListening, !isGenerating, !synthesizer.isSpeaking else { return }
         restartTask?.cancel()
+        let retryDelay = min(4000, 250 * (1 << min(consecutiveMicFailures, 4)))
         restartTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: .milliseconds(retryDelay))
             guard !Task.isCancelled, let self, self.handsFree, !self.isListening, !self.isGenerating else { return }
             self.authorizeMicrophone()
         }
