@@ -413,7 +413,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     }
 
     @objc private func audioRouteChanged(_ notification: Notification) {
-        guard handsFree, audioEngine.isRunning == false else { return }
+        guard handsFree else { return }
         stopRecognition()
         stopAudioInput()
         scheduleRestart()
@@ -429,6 +429,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         synthesizer.stopSpeaking(at: .immediate)
         queuedSpeechCount = 0
         generationTask?.cancel()
+        spokenPrefixCount = 0
+        startedSpeakingReply = false
         if handlePhoneCommand(prompt) { if queuedSpeechCount == 0 { openFollowUpWindow() }; return }
         heardText = prompt
         reply = ""
@@ -586,6 +588,12 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         }
     }
 
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        // An iOS audio interruption may cancel playback without didFinish.
+        queuedSpeechCount = 0
+        if !isGenerating && handsFree { openFollowUpWindow() }
+    }
+
     func activateAlwaysReady() {
         guard !didActivateAutomatically else { return }
         didActivateAutomatically = true
@@ -642,7 +650,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private func scheduleRestart() {
         guard handsFree, !isListening, !isGenerating, queuedSpeechCount == 0, !synthesizer.isSpeaking else { return }
         restartTask?.cancel()
-        let retryDelay = consecutiveMicFailures == 0 ? 120 : min(4000, 250 * (1 << min(consecutiveMicFailures, 4)))
+        let retryDelay = consecutiveMicFailures == 0 ? 120 : min(30_000, 250 * (1 << min(consecutiveMicFailures, 7)))
         restartTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(retryDelay))
             guard !Task.isCancelled, let self, self.handsFree, !self.isListening, !self.isGenerating, self.queuedSpeechCount == 0, !self.synthesizer.isSpeaking else { return }
