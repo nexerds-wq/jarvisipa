@@ -25,7 +25,8 @@ targets:
         UIBackgroundModes:
           - audio
         NSMicrophoneUsageDescription: "When hands-free is on, JARVIS AURA uses your iPhone microphone to listen for Hey Jarvis and follow-up questions."
-        NSSpeechRecognitionUsageDescription: "JARVIS AURA recognizes your wake word and conversation using on-device speech recognition."\n        NSLocationWhenInUseUsageDescription: "Only when you turn on nearby alerts, AURA uses approximate location for local weather warnings, rain forecasts and regional emergency news."
+        NSSpeechRecognitionUsageDescription: "JARVIS AURA recognizes your wake word and conversation using on-device speech recognition."
+        NSLocationWhenInUseUsageDescription: "Only when you turn on nearby alerts, AURA uses approximate location for local weather warnings, rain forecasts and regional emergency news."
         UIRequiredDeviceCapabilities:
           - arm64
         UISupportedInterfaceOrientations:
