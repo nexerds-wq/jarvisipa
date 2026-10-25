@@ -78,6 +78,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var consecutiveMicFailures = 0
     private var spokenPrefixCount = 0
     private var startedSpeakingReply = false
+    private var queuedSpeechCount = 0
     private var restartTask: Task<Void, Never>?
     private var didActivateAutomatically = false
     private var silenceTask: Task<Void, Never>?
@@ -144,6 +145,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
     private func authorizeMicrophone() {
         guard modelReady, !isGenerating else { return }
+        guard queuedSpeechCount == 0, !synthesizer.isSpeaking else { return }
         if microphoneAuthorized { startListening(); return }
         SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
             AVAudioSession.sharedInstance().requestRecordPermission { granted in
@@ -289,6 +291,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         guard modelReady else { checkAvailability(); return }
         stopMicrophone()
         synthesizer.stopSpeaking(at: .immediate)
+        queuedSpeechCount = 0
         generationTask?.cancel()
         if handlePhoneCommand(prompt) { scheduleRestart(); return }
         heardText = prompt
@@ -325,7 +328,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 self.speakRemainingReply()
                 self.isGenerating = false
                 self.status = self.synthesizer.isSpeaking ? "JARVIS is speaking..." : "Ready for another question."
-                if !self.synthesizer.isSpeaking { self.scheduleRestart() }
+                if self.queuedSpeechCount == 0 && !self.synthesizer.isSpeaking { self.scheduleRestart() }
             } catch is CancellationError {
                 self.isGenerating = false
                 self.status = "Interrupted. Ready when you are."
@@ -353,6 +356,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         startedSpeakingReply = true
         spokenPrefixCount = boundary + 1
         configureSpeechAudio()
+        queuedSpeechCount += 1
         synthesizer.speak(utterance)
     }
 
@@ -362,7 +366,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         guard spokenPrefixCount < chars.count else { return }
         let remaining = String(chars.dropFirst(spokenPrefixCount))
         guard let utterance = makeUtterance(remaining) else { return }
-        configureSpeechAudio()
+        if queuedSpeechCount == 0 { configureSpeechAudio() }
+        queuedSpeechCount += 1
         synthesizer.speak(utterance)
     }
 
@@ -401,6 +406,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         }
         configureSpeechAudio()
         status = "Previewing the selected voice..."
+        queuedSpeechCount = 1
         synthesizer.speak(utterance)
     }
 
@@ -411,6 +417,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         handsFree = false
         stopMicrophone()
         synthesizer.stopSpeaking(at: .immediate)
+        queuedSpeechCount = 0
         isGenerating = false
         status = "Stopped. Tap the microphone whenever you're ready."
     }
@@ -426,7 +433,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        if !isGenerating && !synthesizer.isSpeaking && !isListening {
+        queuedSpeechCount = max(0, queuedSpeechCount - 1)
+        if queuedSpeechCount == 0 && !isGenerating && !isListening {
             status = "Ready for another question."
             scheduleRestart()
         }
@@ -445,12 +453,12 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     }
 
     private func scheduleRestart() {
-        guard handsFree, !isListening, !isGenerating, !synthesizer.isSpeaking else { return }
+        guard handsFree, !isListening, !isGenerating, queuedSpeechCount == 0, !synthesizer.isSpeaking else { return }
         restartTask?.cancel()
         let retryDelay = min(4000, 250 * (1 << min(consecutiveMicFailures, 4)))
         restartTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(retryDelay))
-            guard !Task.isCancelled, let self, self.handsFree, !self.isListening, !self.isGenerating else { return }
+            guard !Task.isCancelled, let self, self.handsFree, !self.isListening, !self.isGenerating, self.queuedSpeechCount == 0, !self.synthesizer.isSpeaking else { return }
             self.authorizeMicrophone()
         }
     }
