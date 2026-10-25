@@ -196,6 +196,15 @@ struct AuraContentView: View {
             .pickerStyle(.segmented)
             .onChange(of: voice.personality) { _, _ in voice.newConversation() }
 
+            Toggle("Hands-free wake listening (foreground)", isOn: Binding(get: { voice.handsFree }, set: { voice.setHandsFree($0) }))
+                .tint(.cyan)
+            Picker("iPhone voice", selection: $voice.selectedVoice) {
+                ForEach(voice.availableVoices, id: \.self) { name in Text(name == "Automatic" ? "Best available" : name).tag(name) }
+            }
+            Button("Play music") { voice.send("play music") }
+                .buttonStyle(.bordered)
+            Button("Open iPhone alarms") { voice.send("open alarm") }
+                .buttonStyle(.bordered)
             Toggle("Speak responses aloud", isOn: $voice.speakReplies)
                 .tint(.cyan)
                 .font(.subheadline)
@@ -205,7 +214,7 @@ struct AuraContentView: View {
     }
 
     private var footer: some View {
-        Text("No PC • No IP address • No API subscription\nUses Apple's on-device language model and system voices.\nTap to talk; tap again to send. Requires iOS 26+ and Apple Intelligence.")
+        Text("No PC • No IP address • No API subscription\nUses Apple's on-device language model and system voices.\nHands-free wake listening works while the app stays active, not guaranteed when locked. Music controls use the iPhone system player. Clock alarms require confirmation in Clock. Requires iOS 26+ and Apple Intelligence.")
             .font(.system(size: 11))
             .multilineTextAlignment(.center)
             .foregroundStyle(.white.opacity(0.5))
