@@ -29,6 +29,7 @@ struct AuraContentView: View {
                 .padding(.bottom, 35)
             }
         }
+        .onAppear { voice.activateAlwaysReady() }
     }
 
     private var header: some View {
@@ -139,7 +140,7 @@ struct AuraContentView: View {
             Button {
                 voice.microphoneTapped()
             } label: {
-                Label(voice.isListening ? "FINISH TALKING" : "TALK TO JARVIS",
+                Label(voice.isListening ? "LISTENING • TAP TO SEND" : "RESTART MICROPHONE",
                       systemImage: voice.isListening ? "stop.fill" : "mic.fill")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .tracking(1)
@@ -196,7 +197,7 @@ struct AuraContentView: View {
             .pickerStyle(.segmented)
             .onChange(of: voice.personality) { _, _ in voice.newConversation() }
 
-            Toggle("Hands-free wake listening (foreground)", isOn: Binding(get: { voice.handsFree }, set: { voice.setHandsFree($0) }))
+            Toggle("Always-ready Hey Jarvis listening", isOn: Binding(get: { voice.handsFree }, set: { voice.setHandsFree($0) }))
                 .tint(.cyan)
             Picker("iPhone voice", selection: $voice.selectedVoice) {
                 ForEach(voice.availableVoices, id: \.self) { name in Text(name == "Automatic" ? "Best available" : name).tag(name) }
