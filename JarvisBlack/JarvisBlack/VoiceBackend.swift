@@ -17,6 +17,7 @@ final class VoiceBackend {
     private var model: ModelContainer?
     private var modelTask: Task<ModelContainer, Error>?
     private var session: ChatSession?
+    var isReady: Bool { session != nil }
 
     private let instructions = """
         You are Jarvis, a capable voice-first personal assistant on an iPhone.

@@ -8,12 +8,20 @@ final class JarvisController: ObservableObject {
     private let voice = VoiceSpeaker()
     private let backend = VoiceBackend()
     private var launched = false
+    private var currentCommand: Task<Void, Never>?
+    private var announcedModelLoading = false
 
     func launch() async {
         guard !launched else { return }
         launched = true
         wake.onCommand = { [weak self] phrase in
-            Task { await self?.handle(phrase) }
+            guard let self else { return }
+            // Re-arm before AI generation or speech: a new wake phrase can
+            // interrupt Jarvis even when he is still talking.
+            self.wake.start()
+            self.currentCommand?.cancel()
+            self.voice.stop()
+            self.currentCommand = Task { await self.handle(phrase) }
         }
         let permitted = await wake.requestPermissions()
         if permitted {
@@ -29,20 +37,29 @@ final class JarvisController: ObservableObject {
     private func handle(_ phrase: String) async {
         if let intent = MusicIntent.parse(phrase) {
             let spoken = await music.execute(intent)
+            guard !Task.isCancelled else { return }
             await voice.speak(backend.synthesize(spoken))
-            wake.start()
             return
         }
 
         do {
+            if !backend.isReady && !announcedModelLoading {
+                announcedModelLoading = true
+                await voice.speak(VoiceReply(
+                    text: "Loading my offline AI. The first download can take several minutes.",
+                    audio: nil
+                ))
+                guard !Task.isCancelled else { return }
+            }
             let reply = try await backend.ask(phrase)
+            guard !Task.isCancelled else { return }
             await voice.speak(reply)
         } catch {
+            guard !Task.isCancelled else { return }
             await voice.speak(VoiceReply(
                 text: "I couldn't load my offline AI. Please check storage and connect to Wi-Fi for the first model download.",
                 audio: nil
             ))
         }
-        wake.start()
     }
 }

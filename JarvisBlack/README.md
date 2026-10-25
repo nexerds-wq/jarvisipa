@@ -2,13 +2,16 @@
 
 JarvisBlack is a black-screen, voice-only iPhone app. **The AI runs on the iPhone** using Apple's MLX Swift libraries. No Ollama server, OpenAI API, home computer or cloud inference is needed.
 
-The existing Solos Jarvis bundle ID is **`com.nexer.solosjarvisbg`**, version `26.0` build `28`. This project lives on a separate branch and does not change the original JarvisGlasses source or workflow. Installing a correctly signed version with that same bundle ID replaces the old installed app and does not preserve the glasses HUD features.
+The existing Solos Jarvis bundle ID is **`com.nexer.solosjarvisbg`**, version `26.1` build `29`. This project lives on a separate branch and does not change the original JarvisGlasses source or workflow. Installing a correctly signed version with that same bundle ID replaces the old installed app and does not preserve the glasses HUD features.
 
 ## What works
 
 - Completely black interface, without buttons or labels.
 - Wakes to **"Hey Jarvis," "Hello Jarvis," "Hi Jarvis,"** or just **"Jarvis"** while speech recognition is running.
 - Uses Apple speech recognition for commands and Apple's built-in text-to-speech for answers.
+- Waits for iOS to confirm speech has finished, instead of checking too early and cutting it off.
+- Keeps the wake listener active during local AI generation and spoken responses. Saying a wake phrase while Jarvis speaks interrupts his current response and starts a new command (headphones reduce feedback/false triggers).
+- Restarts interrupted recognition after audio-route changes, audio-session interruptions, and unlocking the app.
 - Runs **Qwen3 8B 4-bit** locally through MLX. The app downloads model weights from Hugging Face on first AI use and caches them for later offline use. Allow several gigabytes of free storage, Wi-Fi, and time for the initial download.
 - Keeps conversational context in memory while the app is running.
 - Apple Music commands such as play, pause, resume, next and stop run locally using MusicKit. Apple Music playback may still require internet and a subscription.
@@ -19,6 +22,7 @@ The existing Solos Jarvis bundle ID is **`com.nexer.solosjarvisbg`**, version `2
 - The 8B model uses substantial memory and can generate responses slowly or be terminated under memory pressure. This target is untested on the physical iPhone 16 Pro Max, so a smaller quantized model may be required.
 - A black screen does not remove the microphone permission prompt or iOS privacy indicator.
 - iOS does not allow a normal third-party app to act as a guaranteed, system-wide, always-on Siri replacement. The system can suspend recording in the background, particularly after the app is force-quit.
+- Lock-screen audio can continue when iOS permits an active audio session, but lock-screen recognition must be tested on-device and can be stopped by iOS. This project cannot guarantee permanent hotword detection behind the lock screen.
 - Jarvis cannot know live weather, news or other changing facts offline. Music commands rely on Apple's MusicKit and are handled separately.
 
 ## Build on GitHub

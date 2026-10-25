@@ -37,7 +37,7 @@ jobs:
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
           BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")
           test "$BUNDLE_ID" = "com.nexer.solosjarvisbg"
-          test "$BUILD" = "28"
+          test "$BUILD" = "29"
       - name: Package unsigned IPA
         run: |
           test -d build/DerivedData/Build/Products/Release-iphoneos/JarvisBlack.app

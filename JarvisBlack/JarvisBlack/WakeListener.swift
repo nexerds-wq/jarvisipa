@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Speech
+import UIKit
 
 /// An on-device-first speech-recognition wake phrase listener.
 /// iOS can suspend an app or interrupt its audio session; this is not a system-wide hotword.
@@ -20,6 +21,41 @@ final class WakeListener {
     private var hasTap = false
     private var generation = 0
     private var command = ""
+    private var isInterrupted = false
+    private var notificationTokens: [NSObjectProtocol] = []
+
+    init() {
+        let center = NotificationCenter.default
+        notificationTokens.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            let value = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if value == AVAudioSession.InterruptionType.began.rawValue {
+                    self.isInterrupted = true
+                    self.tearDownRecognition()
+                } else if value == AVAudioSession.InterruptionType.ended.rawValue {
+                    self.isInterrupted = false
+                    self.scheduleRetry()
+                }
+            }
+        })
+        notificationTokens.append(center.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleRetry()
+            }
+        })
+        notificationTokens.append(center.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleRetry()
+            }
+        })
+    }
 
     private static let wakeExpression = try! NSRegularExpression(
         pattern: #"^\s*(?:(?:hey|hello|hi)[, ]+)?(?:jarvis|jar\s*vis|jervis)\b"#,
@@ -59,7 +95,7 @@ final class WakeListener {
     }
 
     private func beginRecognition() {
-        guard isActive else { return }
+        guard isActive, !isInterrupted else { return }
         tearDownRecognition()
         guard let recognizer, recognizer.isAvailable else {
             scheduleRetry()
@@ -171,7 +207,7 @@ final class WakeListener {
     }
 
     private func scheduleRetry() {
-        guard isActive else { return }
+        guard isActive, !isInterrupted else { return }
         rotationTask?.cancel()
         rotationTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)

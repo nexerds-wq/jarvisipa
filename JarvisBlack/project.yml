@@ -25,8 +25,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nexer.solosjarvisbg
-        MARKETING_VERSION: "26.0"
-        CURRENT_PROJECT_VERSION: "28"
+        MARKETING_VERSION: "26.1"
+        CURRENT_PROJECT_VERSION: "29"
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         SWIFT_VERSION: "5.0"
