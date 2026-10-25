@@ -22,7 +22,7 @@ final class WakeListener {
     private var command = ""
 
     private static let wakeExpression = try! NSRegularExpression(
-        pattern: #"\bhey[ ,]+(?:jarvis|jar\s*vis|jervis)\b"#,
+        pattern: #"^\s*(?:(?:hey|hello|hi)[, ]+)?(?:jarvis|jar\s*vis|jervis)\b"#,
         options: [.caseInsensitive]
     )
 
@@ -76,7 +76,10 @@ final class WakeListener {
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
             request.taskHint = .dictation
-            request.contextualStrings = ["Hey Jarvis", "Jarvis", "pause music", "play music"]
+            request.contextualStrings = [
+                "Hey Jarvis", "Hello Jarvis", "Hi Jarvis", "Jarvis", "Jervis",
+                "pause music", "play music"
+            ]
             if recognizer.supportsOnDeviceRecognition {
                 request.requiresOnDeviceRecognition = true
             }

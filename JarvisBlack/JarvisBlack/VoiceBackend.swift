@@ -1,83 +1,79 @@
 import Foundation
-
-struct ChatLine: Codable {
-    let role: String
-    let content: String
-}
+import MLX
+import MLXHuggingFace
+import MLXLLM
+import MLXLMCommon
 
 struct VoiceReply {
     let text: String
     let audio: Data?
 }
 
-private struct ServerResponse: Decodable {
-    let reply: String
-    let audioBase64: String?
-}
-
-private struct SpeechResponse: Decodable {
-    let audioBase64: String?
-}
-
-enum BackendError: LocalizedError {
-    case notConfigured
-    case badResponse
-
-    var errorDescription: String? {
-        switch self {
-        case .notConfigured: "The AI server needs to be configured first."
-        case .badResponse: "The AI server didn't respond correctly."
-        }
-    }
-}
-
+/// Local inference. Model weights download once to the app's private cache.
+@MainActor
 final class VoiceBackend {
-    private let serverURL: URL?
-    private let accessToken: String
+    private var model: ModelContainer?
+    private var modelTask: Task<ModelContainer, Error>?
+    private var session: ChatSession?
 
-    init() {
-        let address = Bundle.main.object(forInfoDictionaryKey: "JARVIS_SERVER_URL") as? String ?? ""
-        serverURL = address.contains("YOUR-SERVER") ? nil : URL(string: address)
-        accessToken = Bundle.main.object(forInfoDictionaryKey: "JARVIS_CLIENT_TOKEN") as? String ?? ""
-    }
+    private let instructions = """
+        You are Jarvis, a capable voice-first personal assistant on an iPhone.
+        Speak naturally and answer clearly in one or two sentences unless asked for detail.
+        You work offline and cannot look up live facts or control an app unless the phone handles that action.
+        Never claim to have searched the web or completed a device action you did not perform.
+        """
 
-    func ask(_ command: String, history: [ChatLine]) async throws -> VoiceReply {
-        struct Payload: Encodable {
-            let message: String
-            let history: [ChatLine]
+    func ask(_ command: String) async throws -> VoiceReply {
+        let chat = try await prepareSession()
+        var answer = ""
+        for try await part in chat.streamResponse(to: command) {
+            answer += part
+            if answer.count > 1200 { break }
         }
-        let data = try await post("chat", body: Payload(message: command, history: history))
-        let decoded = try JSONDecoder().decode(ServerResponse.self, from: data)
-        return VoiceReply(text: decoded.reply,
-                          audio: decoded.audioBase64.flatMap { Data(base64Encoded: $0) })
+        let clean = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { throw LocalAIError.emptyResponse }
+        return VoiceReply(text: clean, audio: nil)
     }
 
-    func synthesize(_ text: String) async -> VoiceReply {
-        struct Payload: Encodable { let text: String }
+    func synthesize(_ text: String) -> VoiceReply {
+        VoiceReply(text: text, audio: nil)
+    }
+
+    private func prepareSession() async throws -> ChatSession {
+        if let session { return session }
+        let loaded = try await loadModel()
+        let session = ChatSession(
+            loaded,
+            instructions: instructions,
+            generateParameters: GenerateParameters(temperature: 0.5)
+        )
+        self.session = session
+        return session
+    }
+
+    private func loadModel() async throws -> ModelContainer {
+        if let model { return model }
+        if let modelTask { return try await modelTask.value }
+
+        let task = Task<ModelContainer, Error> {
+            Memory.cacheLimit = 20 * 1024 * 1024
+            return try await #huggingFaceLoadModelContainer(
+                configuration: LLMRegistry.qwen3_8b_4bit
+            ) { _ in }
+        }
+        modelTask = task
         do {
-            let data = try await post("speak", body: Payload(text: text))
-            let decoded = try JSONDecoder().decode(SpeechResponse.self, from: data)
-            return VoiceReply(text: text,
-                              audio: decoded.audioBase64.flatMap { Data(base64Encoded: $0) })
+            let loaded = try await task.value
+            model = loaded
+            modelTask = nil
+            return loaded
         } catch {
-            return VoiceReply(text: text, audio: nil)
+            modelTask = nil
+            throw error
         }
     }
+}
 
-    private func post<T: Encodable>(_ path: String, body: T) async throws -> Data {
-        guard let serverURL, serverURL.scheme == "https" else { throw BackendError.notConfigured }
-        let endpoint = serverURL.appendingPathComponent(path)
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 60
-
-        request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let status = response as? HTTPURLResponse, (200..<300).contains(status.statusCode) else {
-            throw BackendError.badResponse
-        }
-        return data
-    }
+enum LocalAIError: Error {
+    case emptyResponse
 }

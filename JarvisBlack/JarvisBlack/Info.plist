@@ -19,7 +19,5 @@
   <key>NSMicrophoneUsageDescription</key><string>Jarvis listens for your chosen wake phrase and spoken commands while listening is enabled.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Jarvis uses speech recognition to hear Hey Jarvis and understand your requests.</string>
   <key>NSAppleMusicUsageDescription</key><string>Jarvis uses your Apple Music account when you ask it to play or control music.</string>
-  <key>JARVIS_SERVER_URL</key><string>https://YOUR-SERVER.example.com</string>
-  <key>JARVIS_CLIENT_TOKEN</key><string>REPLACE_WITH_SERVER_ACCESS_TOKEN</string>
 </dict>
 </plist>

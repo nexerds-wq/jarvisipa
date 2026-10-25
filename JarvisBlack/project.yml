@@ -9,6 +9,15 @@ targets:
     platform: iOS
     sources:
       - path: JarvisBlack
+    dependencies:
+      - package: mlx-swift-lm
+        product: MLXLLM
+      - package: mlx-swift-lm
+        product: MLXLMCommon
+      - package: mlx-swift-lm
+        product: MLXHuggingFace
+      - package: mlx-swift
+        product: MLX
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nexer.solosjarvisbg
@@ -23,3 +32,10 @@ targets:
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
     entitlements:
       path: JarvisBlack/JarvisBlack.entitlements
+packages:
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    from: 3.32.3
+  mlx-swift:
+    url: https://github.com/ml-explore/mlx-swift
+    from: 0.32.3

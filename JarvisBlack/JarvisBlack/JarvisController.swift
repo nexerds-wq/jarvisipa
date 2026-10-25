@@ -7,7 +7,6 @@ final class JarvisController: ObservableObject {
     private let music = MusicCommands()
     private let voice = VoiceSpeaker()
     private let backend = VoiceBackend()
-    private var history: [ChatLine] = []
     private var launched = false
 
     func launch() async {
@@ -30,22 +29,17 @@ final class JarvisController: ObservableObject {
     private func handle(_ phrase: String) async {
         if let intent = MusicIntent.parse(phrase) {
             let spoken = await music.execute(intent)
-            await voice.speak(await backend.synthesize(spoken))
+            await voice.speak(backend.synthesize(spoken))
             wake.start()
             return
         }
 
         do {
-            let reply = try await backend.ask(phrase, history: history)
-            history.append(ChatLine(role: "user", content: phrase))
-            history.append(ChatLine(role: "assistant", content: reply.text))
-            if history.count > 12 { history.removeFirst(history.count - 12) }
+            let reply = try await backend.ask(phrase)
             await voice.speak(reply)
         } catch {
             await voice.speak(VoiceReply(
-                text: error.localizedDescription == BackendError.notConfigured.localizedDescription
-                    ? "The AI server isn't configured yet. Music commands can still work."
-                    : "I couldn't reach my AI service. Please check your connection.",
+                text: "I couldn't load my offline AI. Please check storage and connect to Wi-Fi for the first model download.",
                 audio: nil
             ))
         }
