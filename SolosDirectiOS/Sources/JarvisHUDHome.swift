@@ -151,8 +151,8 @@ struct JarvisHUDHome: View {
             }
         }
         .overlay {
-            JarvisVoiceBorder(level:phone.microphoneLevel,
-                              userSpeaking:phone.userVoiceActive,
+            JarvisVoiceBorder(level:max(phone.microphoneLevel,captions.microphoneLevel),
+                              userSpeaking:phone.userVoiceActive || captions.voiceActive,
                               jarvisSpeaking:accessory.speechIsActive)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
@@ -807,9 +807,9 @@ struct JarvisHUDHome: View {
     private var jarvisPanel: some View {
         section("JARVIS • YOUR AI") {
             HStack(spacing:14) {
-                Label(phone.userVoiceActive ? "YOU SPEAKING" : "BLUE • YOUR VOICE",
+                Label(phone.userVoiceActive || captions.voiceActive ? "YOU SPEAKING" : "BLUE • YOUR VOICE",
                       systemImage:"waveform")
-                    .foregroundStyle(phone.userVoiceActive ? .blue : .secondary)
+                    .foregroundStyle(phone.userVoiceActive || captions.voiceActive ? .blue : .secondary)
                 Label(accessory.speechIsActive ? "JARVIS SPEAKING" : "ORANGE • JARVIS",
                       systemImage:"speaker.wave.2.fill")
                     .foregroundStyle(accessory.speechIsActive ? .orange : .secondary)
@@ -826,9 +826,12 @@ struct JarvisHUDHome: View {
                     phone.speakExternalReply("Hey. I'm Jarvis. Tell me what you're working on, and we'll figure it out together.",companion:true)
                 }.font(.caption)
             }
-            Text(phone.voiceStatus).font(.caption).foregroundStyle(.secondary)
-            if !phone.transcribed.isEmpty {
-                Text("Last heard: " + phone.transcribed)
+            Text(mode == 2 || mode == 3 ? captions.status : phone.voiceStatus)
+                .font(.caption).foregroundStyle(.secondary)
+            let latestWords = mode == 2 || mode == 3 ?
+                (captions.partial.isEmpty ? captions.latestFinal : captions.partial) : phone.transcribed
+            if !latestWords.isEmpty {
+                Text("Last heard: " + latestWords)
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
             }
             if phone.aiStatus.hasPrefix("Apple Intelligence unavailable") ||

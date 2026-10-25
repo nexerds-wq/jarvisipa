@@ -18,6 +18,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     @Published var audioBuffers = 0
     @Published var recognizerMode = "Not started"
     @Published var microphoneRoute = "No microphone selected"
+    @Published private(set) var microphoneLevel: Double = 0
+    @Published private(set) var voiceActive = false
 
     var onSubtitle: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
@@ -36,6 +38,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     private var generation = 0
     private var tapInstalled = false
     private let requestLock = NSLock()
+    private let meterLock = NSLock()
+    private var lastMeterPublish = Date.distantPast
     private var activeSpeechRecognizer: SFSpeechRecognizer?
     private var healthTimer: Timer?
     private var lastAudioBufferAt = Date.distantPast
@@ -96,6 +100,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
     func start(locale:String, name:String, allowOnlineRecognition:Bool = false, preferPhoneMicrophone:Bool = false) {
         stop()
         audioBuffers = 0
+        microphoneLevel = 0
+        voiceActive = false
         buffersCaptured = 0
         lastDisplay = .distantPast
         lastCaptionDelivered = ""
@@ -187,26 +193,26 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                 try audio.setCategory(.playAndRecord,mode:.default,
                                       options:[.mixWithOthers,.allowBluetoothHFP,.defaultToSpeaker])
             }
-            if preferPhoneMicrophone,
-               let builtIn = audio.availableInputs?.first(where: { $0.portType == .builtInMic }) {
-                try audio.setPreferredInput(builtIn)
-            }
-            if !preferPhoneMicrophone {
-                guard let solosMic = audio.availableInputs?.first(where: {
+            try audio.setActive(true,options:.notifyOthersOnDeactivation)
+            let inputs = audio.availableInputs ?? []
+            let builtIn = inputs.first(where:{$0.portType == .builtInMic})
+            let headset = inputs.first(where:{$0.portType == .bluetoothHFP})
+            let solos = inputs.first(where: {
                     $0.portType == .bluetoothHFP &&
                     ($0.portName.localizedCaseInsensitiveContains("Solos") ||
                      $0.uid.localizedCaseInsensitiveContains("Solos"))
-                }) else {
-                    desired = false
-                    starting = false
-                    status = "SOLOS MIC UNAVAILABLE • Connect Solos Bluetooth microphone in iPhone Settings. No iPhone mic fallback."
-                    cleanup()
-                    return
-                }
-                try audio.setPreferredInput(solosMic)
+                })
+            // The caption/conversation screen must work with an iPhone alone,
+            // any HFP headset, or Solos. Never require proprietary HUD audio.
+            guard let selected = preferPhoneMicrophone ? builtIn : (solos ?? headset ?? builtIn) else {
+                desired = false
+                starting = false
+                status = "No usable microphone. Check iPhone microphone permission and audio input."
+                cleanup()
+                return
             }
-            microphoneRoute = audio.currentRoute.inputs.map(\.portName).joined(separator:", ")
-            if microphoneRoute.isEmpty { microphoneRoute = "No audio input selected" }
+            try audio.setPreferredInput(selected)
+            microphoneRoute = selected.portName
             let input = engine.inputNode
             let format = input.outputFormat(forBus:0)
             guard format.sampleRate > 0, format.channelCount > 0 else {
@@ -226,6 +232,28 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                 self.requestLock.unlock()
                 self.buffersCaptured += 1
                 self.lastAudioBufferAt = Date()
+                self.meterLock.lock()
+                let publishMeter = Date().timeIntervalSince(self.lastMeterPublish) >= 0.08
+                if publishMeter { self.lastMeterPublish = Date() }
+                self.meterLock.unlock()
+                if publishMeter, let channel = buffer.floatChannelData?[0] {
+                    let frames = Int(buffer.frameLength)
+                    if frames > 0 {
+                        var power:Float = 0
+                        let step = max(1,frames / 128)
+                        var count = 0
+                        for index in stride(from:0,to:frames,by:step) {
+                            power += channel[index] * channel[index]
+                            count += 1
+                        }
+                        let level = min(1.0,max(0.0,Double(sqrt(power / Float(max(1,count)))) * 11))
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self, self.desired, self.isListening else { return }
+                            self.microphoneLevel = self.microphoneLevel * 0.45 + level * 0.55
+                            self.voiceActive = self.microphoneLevel >= 0.13
+                        }
+                    }
+                }
                 if self.buffersCaptured % 45 == 0 {
                     let count = self.buffersCaptured
                     DispatchQueue.main.async { [weak self] in
@@ -406,6 +434,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         requestLock.unlock()
         activeSpeechRecognizer = nil
         isListening = false
+        microphoneLevel = 0
+        voiceActive = false
         starting = false
     }
 
