@@ -1,80 +1,35 @@
-name: Build unsigned AURA iPhone IPA
-
+name: Build Jarvis unsigned IPA
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  ios-unsigned:
+  build:
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
-      - name: Check out AURA source
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-
-      - name: Install JavaScript packages
-        run: npm ci
-
-      - name: Generate native iOS project
-        run: npx expo prebuild --platform ios --no-install --non-interactive
-
-      - name: Install CocoaPods
-        run: |
-          cd ios
-          pod install --repo-update
-
-      - name: Compile iPhone app without signing
-        shell: bash
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Solos Jarvis project
+        working-directory: SolosDirectiOS
+        run: xcodegen generate --spec project.yml
+      - name: Compile without signing
+        working-directory: SolosDirectiOS
         run: |
           set -euo pipefail
-          WORKSPACE=$(find ios -maxdepth 2 -name '*.xcworkspace' -type d -print -quit)
-          if [[ -z "$WORKSPACE" ]]; then
-            echo 'Missing Xcode workspace after prebuild.' >&2
-            exit 1
-          fi
-          SCHEME=$(xcodebuild -list -json -workspace "$WORKSPACE" | ruby -rjson -e 'data=JSON.parse(STDIN.read); puts data.fetch("workspace").fetch("schemes").find { |x| x !~ /Pods/ }')
-          if [[ -z "$SCHEME" ]]; then
-            echo 'Could not determine the iOS app scheme.' >&2
-            exit 1
-          fi
-          xcodebuild \
-            -workspace "$WORKSPACE" \
-            -scheme "$SCHEME" \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$RUNNER_TEMP/aura-build" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            build
-
-      - name: Package unsigned IPA for separate signing
-        shell: bash
+          xcodebuild -project SolosDirect.xcodeproj -scheme SolosDirect -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/jarvis-build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CURRENT_PROJECT_VERSION=27 build
+      - name: Package unsigned IPA
         run: |
           set -euo pipefail
-          APP=$(find "$RUNNER_TEMP/aura-build/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -type d -print -quit)
-          if [[ -z "$APP" ]]; then
-            echo 'No device app bundle was produced.' >&2
-            exit 1
-          fi
+          APP=$(find "$RUNNER_TEMP/jarvis-build/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP"
           mkdir -p Payload
           ditto "$APP" "Payload/$(basename "$APP")"
-          zip -qry AURA_Local_Unsigned.ipa Payload
-          unzip -t AURA_Local_Unsigned.ipa
-
-      - name: Downloadable unsigned IPA artifact
-        uses: actions/upload-artifact@v4
+          zip -qry Jarvis_Update_Unsigned.ipa Payload
+          unzip -t Jarvis_Update_Unsigned.ipa
+      - uses: actions/upload-artifact@v4
         with:
-          name: AURA_Local_Unsigned_IPA
-          path: AURA_Local_Unsigned.ipa
+          name: Jarvis_Update_Unsigned_IPA
+          path: Jarvis_Update_Unsigned.ipa
           if-no-files-found: error
-          compression-level: 0
-
