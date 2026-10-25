@@ -27,6 +27,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build/DerivedData \
+            -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO \
             build
       - name: Verify existing Jarvis bundle ID and updated version
