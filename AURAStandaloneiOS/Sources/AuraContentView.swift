@@ -38,7 +38,7 @@ struct AuraContentView: View {
                 Text("JARVIS")
                     .font(.system(size: 34, weight: .thin, design: .rounded))
                     .tracking(8)
-                Text("AURA  /  ON-DEVICE AI")
+                Text("AURA  /  ON-DEVICE AI + LOCAL ALERTS")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .tracking(3)
                     .foregroundStyle(.cyan.opacity(0.85))
@@ -97,6 +97,11 @@ struct AuraContentView: View {
                     .font(.caption)
                     .foregroundStyle(.cyan)
             }
+            if voice.followUpReady {
+                Label("CONVERSATION OPEN • 4-SECOND FOLLOW-UP", systemImage: "waveform.circle.fill")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.green)
+            }
             Text(voice.status)
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.8))
@@ -140,7 +145,7 @@ struct AuraContentView: View {
             Button {
                 voice.microphoneTapped()
             } label: {
-                Label(voice.isListening ? "LISTENING • TAP TO SEND" : "RESTART MICROPHONE",
+                Label(voice.isListening ? (voice.followUpReady ? "TALK NATURALLY • TAP TO SEND" : "LISTENING • HEY JARVIS") : "START MICROPHONE",
                       systemImage: voice.isListening ? "stop.fill" : "mic.fill")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .tracking(1)
@@ -197,8 +202,11 @@ struct AuraContentView: View {
             .pickerStyle(.segmented)
             .onChange(of: voice.personality) { _, _ in voice.newConversation() }
 
-            Toggle("Always-ready Hey Jarvis listening", isOn: Binding(get: { voice.handsFree }, set: { voice.setHandsFree($0) }))
+            Toggle("Hands-free Hey Jarvis listening", isOn: Binding(get: { voice.handsFree }, set: { voice.setHandsFree($0) }))
                 .tint(.cyan)
+            Text("The microphone stays active in hands-free mode while speech recognition renews. After Jarvis speaks, ask a follow-up within 4 seconds without saying the wake word. Conversation history stays intact.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.65))
             Picker("iPhone voice", selection: $voice.selectedVoice) {
                 ForEach(voice.availableVoices, id: \.self) { identifier in
                     Text(voice.voiceLabel(for: identifier)).tag(identifier)
@@ -222,13 +230,28 @@ struct AuraContentView: View {
             Toggle("Speak responses aloud", isOn: $voice.speakReplies)
                 .tint(.cyan)
                 .font(.subheadline)
+            Divider().overlay(Color.cyan.opacity(0.3))
+            Text("OPTIONAL LOCAL HEADS-UPS")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .tracking(2)
+                .foregroundStyle(.cyan)
+            Toggle("Chime for weather warnings and incoming rain", isOn: $voice.weatherChimes)
+                .tint(.cyan)
+            Toggle("Chime for new city-area emergency news", isOn: $voice.localNewsChimes)
+                .tint(.cyan)
+            Text(voice.localAlertStatus)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.65))
+            Text("Off by default. Enabling asks for approximate location and uses online weather or city news services. Headlines are not verified to be on your street. Checks run about every 15 minutes while AURA is active, not as a guaranteed emergency alert system.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.65))
         }
         .padding(16)
         .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 17))
     }
 
     private var footer: some View {
-        Text("No PC • No IP address • No API subscription\nUses Apple's on-device AI and installed iPhone voices. Speech punctuation is removed before playback.\nHands-free wake listening works while the app stays active, not guaranteed when locked. Music controls use the iPhone system player. Clock alarms require confirmation in Clock. Requires iOS 26+ and Apple Intelligence.")
+        Text("On-device Apple Intelligence and iPhone voices • No AI API subscription. Optional weather/news checks require internet and approximate location.\nHands-free listening works while iOS keeps the app running; recognition renews without restarting the mic hardware, but locked/background listening isn't guaranteed. Music stays mixed rather than ducked. Requires iOS 26+ and Apple Intelligence.")
             .font(.system(size: 11))
             .multilineTextAlignment(.center)
             .foregroundStyle(.white.opacity(0.5))
