@@ -3,6 +3,8 @@
 An iPhone app with a black screen, no controls, and the wake phrase **“Hey Jarvis.”**
 It uses speech recognition to listen for that phrase, sends ordinary questions to a private AI server, speaks responses using a natural AI voice, and controls Apple Music by voice.
 
+**Bundle identity:** `com.nexer.solosjarvisbg` — the same as the existing SolosDirect Jarvis IPA in this repository. This app's version is `26.0` (build `28`) to follow the previous build `27`. If signed with a compatible signing identity and installed on the same phone, JarvisBlack replaces the installed Solos Jarvis app. It does not include the old glasses HUD features. The original source code remains unchanged in the repository.
+
 This is a **buildable source project**, not yet a tested or signed IPA. The GitHub Actions workflow compiles the iOS app on a Mac runner and packages an **unsigned** IPA.
 
 ## What it does

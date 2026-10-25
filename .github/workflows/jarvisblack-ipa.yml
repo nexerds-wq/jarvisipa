@@ -29,6 +29,14 @@ jobs:
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             build
+      - name: Verify existing Jarvis bundle ID and updated version
+        run: |
+          APP="build/DerivedData/Build/Products/Release-iphoneos/JarvisBlack.app"
+          test -d "$APP"
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")
+          test "$BUNDLE_ID" = "com.nexer.solosjarvisbg"
+          test "$BUILD" = "28"
       - name: Package unsigned IPA
         run: |
           test -d build/DerivedData/Build/Products/Release-iphoneos/JarvisBlack.app

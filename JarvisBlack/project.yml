@@ -1,6 +1,6 @@
 name: JarvisBlack
 options:
-  bundleIdPrefix: com.richardroque
+  bundleIdPrefix: com.nexer
   deploymentTarget:
     iOS: "17.0"
 targets:
@@ -11,7 +11,9 @@ targets:
       - path: JarvisBlack
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.richardroque.jarvisblack
+        PRODUCT_BUNDLE_IDENTIFIER: com.nexer.solosjarvisbg
+        MARKETING_VERSION: "26.0"
+        CURRENT_PROJECT_VERSION: "28"
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         SWIFT_VERSION: "5.0"
