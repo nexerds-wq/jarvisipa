@@ -74,6 +74,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var spokenCharacters = 0
     private var hasMicrophoneTap = false
     private var restartTask: Task<Void, Never>?
+    private var didActivateAutomatically = false
     private var silenceTask: Task<Void, Never>?
     private var recognitionCycle: UInt64 = 0
     private var lastSpeechUpdate = Date.distantPast
@@ -349,6 +350,12 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             status = "Ready for another question."
             scheduleRestart()
         }
+    }
+
+    func activateAlwaysReady() {
+        guard !didActivateAutomatically else { return }
+        didActivateAutomatically = true
+        setHandsFree(true)
     }
 
     func setHandsFree(_ enabled: Bool) {
