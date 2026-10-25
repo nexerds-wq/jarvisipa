@@ -455,7 +455,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             formatter.timeStyle = .short
             formatter.dateStyle = .none
             reply = "It's " + formatter.string(from: Date())
-            speakFullReply()
+            speakRemainingReply()
             if !synthesizer.isSpeaking { scheduleRestart() }
             return true
         }
@@ -464,7 +464,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             formatter.dateStyle = .full
             formatter.timeStyle = .none
             reply = "Today is " + formatter.string(from: Date())
-            speakFullReply()
+            speakRemainingReply()
             if !synthesizer.isSpeaking { scheduleRestart() }
             return true
         }
