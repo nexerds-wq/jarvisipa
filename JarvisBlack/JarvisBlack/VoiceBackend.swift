@@ -31,7 +31,6 @@ final class VoiceBackend {
         var answer = ""
         for try await part in chat.streamResponse(to: command) {
             answer += part
-            if answer.count > 1200 { break }
         }
         let clean = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { throw LocalAIError.emptyResponse }

@@ -10,6 +10,7 @@ The existing Solos Jarvis bundle ID is **`com.nexer.solosjarvisbg`**, version `2
 - Wakes to **"Hey Jarvis," "Hello Jarvis," "Hi Jarvis,"** or just **"Jarvis"** while speech recognition is running.
 - Uses Apple speech recognition for commands and Apple's built-in text-to-speech for answers.
 - Waits for iOS to confirm speech has finished, instead of checking too early and cutting it off.
+- Lets the model finish generating its response instead of cutting the answer at an arbitrary character limit.
 - Keeps the wake listener active during local AI generation and spoken responses. Saying a wake phrase while Jarvis speaks interrupts his current response and starts a new command (headphones reduce feedback/false triggers).
 - Restarts interrupted recognition after audio-route changes, audio-session interruptions, and unlocking the app.
 - Runs **Qwen3 8B 4-bit** locally through MLX. The app downloads model weights from Hugging Face on first AI use and caches them for later offline use. Allow several gigabytes of free storage, Wi-Fi, and time for the initial download.
