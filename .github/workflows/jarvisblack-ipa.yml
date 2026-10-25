@@ -1,0 +1,44 @@
+name: Build JarvisBlack IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "JarvisBlack/**"
+      - ".github/workflows/jarvisblack-ipa.yml"
+
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate JarvisBlack Xcode project
+        run: xcodegen generate --spec JarvisBlack/project.yml --project JarvisBlack
+      - name: Compile for iPhone without a code signature
+        run: |
+          xcodebuild \
+            -project JarvisBlack/JarvisBlack.xcodeproj \
+            -scheme JarvisBlack \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Package unsigned IPA
+        run: |
+          test -d build/DerivedData/Build/Products/Release-iphoneos/JarvisBlack.app
+          mkdir -p build/Payload
+          ditto build/DerivedData/Build/Products/Release-iphoneos/JarvisBlack.app build/Payload/JarvisBlack.app
+          cd build
+          zip -qry JarvisBlack-unsigned.ipa Payload
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JarvisBlack-unsigned-IPA
+          path: build/JarvisBlack-unsigned.ipa
+          if-no-files-found: error

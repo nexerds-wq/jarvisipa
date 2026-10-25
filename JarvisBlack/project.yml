@@ -1,0 +1,23 @@
+name: JarvisBlack
+options:
+  bundleIdPrefix: com.richardroque
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  JarvisBlack:
+    type: application
+    platform: iOS
+    sources:
+      - path: JarvisBlack
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.richardroque.jarvisblack
+        TARGETED_DEVICE_FAMILY: "1"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: JarvisBlack/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+    entitlements:
+      path: JarvisBlack/JarvisBlack.entitlements
