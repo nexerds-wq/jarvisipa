@@ -20,8 +20,10 @@ targets:
       properties:
         CFBundleDisplayName: JARVIS AURA
         CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "2"
+        CFBundleVersion: "3"
         LSRequiresIPhoneOS: true
+        UIBackgroundModes:
+          - audio
         NSMicrophoneUsageDescription: "JARVIS AURA listens when you tap the microphone to talk."
         NSSpeechRecognitionUsageDescription: "JARVIS AURA transcribes your speech locally on the iPhone."
         UIRequiredDeviceCapabilities:
