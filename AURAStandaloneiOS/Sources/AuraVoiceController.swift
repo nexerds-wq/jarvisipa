@@ -84,6 +84,13 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     @Published var reply = ""
     @Published var personality: AuraPersonality = .natural
     @Published var speakReplies = true
+    @Published var weatherChimes = UserDefaults.standard.bool(forKey: "AuraWeatherChimes") {
+        didSet { UserDefaults.standard.set(weatherChimes, forKey: "AuraWeatherChimes"); configureNearbyAlerts() }
+    }
+    @Published var localNewsChimes = UserDefaults.standard.bool(forKey: "AuraNewsChimes") {
+        didSet { UserDefaults.standard.set(localNewsChimes, forKey: "AuraNewsChimes"); configureNearbyAlerts() }
+    }
+    @Published private(set) var localAlertStatus = "Optional local alerts are off."
     @Published var handsFree = false
     @Published private(set) var followUpReady = false
     @Published var selectedVoice = UserDefaults.standard.string(forKey: "AuraPreferredVoice") ?? "Automatic" {
@@ -112,6 +119,13 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var lastSpeechUpdate = Date.distantPast
     private var lastVisibleReplyUpdate = Date.distantPast
     private let musicPlayer = MPMusicPlayerController.systemMusicPlayer
+    private var pendingNearbyChime: String?
+    private lazy var nearbyMonitor: AuraNearbyMonitor = {
+        let monitor = AuraNearbyMonitor()
+        monitor.onChime = { [weak self] message in self?.receiveNearbyChime(message) }
+        monitor.onStatus = { [weak self] message in self?.localAlertStatus = message }
+        return monitor
+    }()
 
     private lazy var englishVoices: [AVSpeechSynthesisVoice] = {
         AVSpeechSynthesisVoice.speechVoices()
@@ -413,7 +427,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         synthesizer.stopSpeaking(at: .immediate)
         queuedSpeechCount = 0
         generationTask?.cancel()
-        if handlePhoneCommand(prompt) { scheduleRestart(); return }
+        if handlePhoneCommand(prompt) { if queuedSpeechCount == 0 { openFollowUpWindow() }; return }
         heardText = prompt
         reply = ""
         lastVisibleReplyUpdate = .distantPast
@@ -448,7 +462,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 self.speakRemainingReply()
                 self.isGenerating = false
                 self.status = self.synthesizer.isSpeaking ? "JARVIS is speaking..." : "Ready for another question."
-                if self.queuedSpeechCount == 0 && !self.synthesizer.isSpeaking { self.openFollowUpWindow() }
+                if self.queuedSpeechCount == 0 && !self.synthesizer.isSpeaking {
+                    if !self.announcePendingNearbyChime() { self.openFollowUpWindow() }
+                }
             } catch is CancellationError {
                 self.isGenerating = false
                 self.status = "Interrupted. Ready when you are."
@@ -498,8 +514,13 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         utterance.voice = (selectedVoice == "Automatic" ? nil : AVSpeechSynthesisVoice(identifier: selectedVoice))
             ?? englishVoices.first
             ?? AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = personality.rate
-        utterance.pitchMultiplier = personality.pitch
+        // Light prosody shifts can soften sensitive responses; built-in iOS TTS
+        // still cannot provide fully generative human emotional delivery.
+        let sensitive = text.lowercased().contains("i'm sorry") ||
+            text.lowercased().contains("that sounds hard") ||
+            text.lowercased().contains("i hear you")
+        utterance.rate = sensitive ? max(0.44, personality.rate - 0.035) : personality.rate
+        utterance.pitchMultiplier = sensitive ? max(0.96, personality.pitch - 0.025) : personality.pitch
         utterance.preUtteranceDelay = 0
         utterance.postUtteranceDelay = 0.08
         return utterance
@@ -559,7 +580,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         queuedSpeechCount = max(0, queuedSpeechCount - 1)
         if queuedSpeechCount == 0 && !isGenerating && !isListening {
             status = "Ready for another question."
-            openFollowUpWindow()
+            if !announcePendingNearbyChime() { openFollowUpWindow() }
         }
     }
 
@@ -567,6 +588,39 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         guard !didActivateAutomatically else { return }
         didActivateAutomatically = true
         setHandsFree(true)
+        configureNearbyAlerts()
+    }
+
+    private func configureNearbyAlerts() {
+        // Only begins location requests after the user explicitly enables alerts.
+        nearbyMonitor.configure(weather: weatherChimes, news: localNewsChimes)
+    }
+
+    private func receiveNearbyChime(_ message: String) {
+        if !speakReplies { localAlertStatus = message; return }
+        if isGenerating || queuedSpeechCount > 0 || (isListening && (followUpReady || !heardText.isEmpty)) {
+            pendingNearbyChime = message
+        } else {
+            announceNearbyChime(message)
+        }
+    }
+
+    private func announceNearbyChime(_ message: String) {
+        stopRecognition() // Retain live microphone input; never interrupt music output.
+        followUpExpiryTask?.cancel()
+        followUpReady = false
+        reply = message
+        spokenPrefixCount = 0
+        queuedSpeechCount = 0
+        speakRemainingReply()
+        if queuedSpeechCount == 0 { openFollowUpWindow() }
+    }
+
+    private func announcePendingNearbyChime() -> Bool {
+        guard let message = pendingNearbyChime, !isGenerating else { return false }
+        pendingNearbyChime = nil
+        announceNearbyChime(message)
+        return true
     }
 
     func setHandsFree(_ enabled: Bool) {
