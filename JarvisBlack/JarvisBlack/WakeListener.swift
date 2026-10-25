@@ -8,6 +8,7 @@ import UIKit
 @MainActor
 final class WakeListener {
     var onCommand: ((String) -> Void)?
+    var onWake: (() -> Void)?
     var onFailure: ((String) -> Void)?
 
     private let engine = AVAudioEngine()
@@ -98,6 +99,7 @@ final class WakeListener {
         guard isActive, !isInterrupted else { return }
         tearDownRecognition()
         guard let recognizer, recognizer.isAvailable else {
+            onFailure?("Speech recognition is unavailable.")
             scheduleRetry()
             return
         }
@@ -136,6 +138,9 @@ final class WakeListener {
                     if let result {
                         self.processTranscript(result.bestTranscription.formattedString)
                     }
+                    if let error {
+                        self.onFailure?("Speech recognition: \(error.localizedDescription)")
+                    }
                     if error != nil || result?.isFinal == true {
                         self.scheduleRetry()
                     }
@@ -153,6 +158,7 @@ final class WakeListener {
                 self?.beginRecognition()
             }
         } catch {
+            onFailure?("Microphone failed: \(error.localizedDescription)")
             tearDownRecognition()
             scheduleRetry()
         }
@@ -170,6 +176,7 @@ final class WakeListener {
             guard match != nil else { return }
             isAwake = true
             command = ""
+            onWake?()
             scheduleSilenceCheck()
         }
 
@@ -200,7 +207,10 @@ final class WakeListener {
             let finalCommand = self.command.trimmingCharacters(in: .whitespacesAndNewlines)
             self.isAwake = false
             self.command = ""
-            guard !finalCommand.isEmpty else { return }
+            guard !finalCommand.isEmpty else {
+                self.scheduleRetry()
+                return
+            }
             self.stop()
             self.onCommand?(finalCommand)
         }
@@ -210,7 +220,7 @@ final class WakeListener {
         guard isActive, !isInterrupted else { return }
         rotationTask?.cancel()
         rotationTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            try? await Task.sleep(nanoseconds: 900_000_000)
             guard !Task.isCancelled else { return }
             self?.beginRecognition()
         }

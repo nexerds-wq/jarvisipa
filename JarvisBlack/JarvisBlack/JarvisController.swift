@@ -14,6 +14,15 @@ final class JarvisController: ObservableObject {
     func launch() async {
         guard !launched else { return }
         launched = true
+        wake.onWake = { [weak self] in
+            guard let self else { return }
+            // A short confirmation so the user knows the wake phrase was heard.
+            // Do not stop recognition: the next words are the command.
+            Task { await self.voice.speak(VoiceReply(text: "Yes?", audio: nil)) }
+        }
+        wake.onFailure = { message in
+            NSLog("[Jarvis WakeListener] %@", message)
+        }
         wake.onCommand = { [weak self] phrase in
             guard let self else { return }
             // Re-arm before AI generation or speech: a new wake phrase can
