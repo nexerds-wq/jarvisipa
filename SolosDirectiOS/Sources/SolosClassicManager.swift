@@ -24,9 +24,14 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     // Unrecognized bytes are never interpreted as controls.
     var onAccessoryPacket: ((Data) -> Void)?
     var onSpeechCompleted: (() -> Void)?
+    // The phone owns wake-word rearming; the HUD has a separate observer so
+    // showing the main screen cannot replace the phone's completion callback.
+    var onHUDSpeechCompleted: (() -> Void)?
+    @Published private(set) var speechIsActive = false
     @Published private(set) var incomingSample = "No accessory messages received"
     private let accessoryManager = EAAccessoryManager.shared()
     private let speaker = AVSpeechSynthesizer()
+    private var activeUtterance: AVSpeechUtterance?
     private var session: EASession?
     private var inputStream: InputStream?
     private var outputStream: OutputStream?
@@ -272,7 +277,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     var isSpeaking: Bool { speaker.isSpeaking }
 
     func interruptSpeech() {
-        if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
+        stopSpeaking()
     }
 
     /// Voice selection uses installed iOS speech voices; no external TTS API key.
@@ -281,17 +286,6 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     func speakCompanion(_ text:String, style:String) {
         let trimmed = text.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        speaker.stopSpeaking(at:.immediate)
-        let session = AVAudioSession.sharedInstance()
-        do {
-            // Speech can coexist with music; never force the Bluetooth headset
-            // into HFP/call mode just to play an assistant reply.
-            try session.setCategory(.playback,mode:.default,
-                                    options:[.mixWithOthers,.allowBluetoothA2DP])
-            try session.setActive(true)
-        } catch {
-            status = "Speech audio route unavailable: " + error.localizedDescription
-        }
         let utterance = AVSpeechUtterance(string:trimmed)
         let candidates = AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language == "en-US" }
@@ -305,15 +299,13 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         utterance.pitchMultiplier = 1.0
         utterance.preUtteranceDelay = 0.07
         utterance.postUtteranceDelay = 0.08
-        speaker.speak(utterance)
         let quality = utterance.voice?.quality == .premium ? "premium" :
                       utterance.voice?.quality == .enhanced ? "enhanced" : "standard"
-        status = "Jarvis speaking via " + audioRoute + " (" +
-                 (utterance.voice?.name ?? "system voice") + ", " + quality + ")"
+        beginSpeech(utterance,quality:quality)
     }
 
     func stopSpeaking() {
-        speaker.stopSpeaking(at:.immediate)
+        if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
     }
 
     func speak(_ text: String) {
@@ -323,16 +315,49 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         let utterance = AVSpeechUtterance(string: trimmed)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = 0.49
+        beginSpeech(utterance,quality:"system")
+    }
+
+    private func beginSpeech(_ utterance: AVSpeechUtterance, quality: String) {
+        // Do not switch to an HFP call route for replies: it can make Bluetooth
+        // audio silent or low quality. The microphone is paused by the caller.
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback,mode:.spokenAudio,
+                                    options:[.mixWithOthers,.allowBluetoothA2DP])
+            try session.setActive(true)
+        } catch {
+            status = "Jarvis audio setup failed: \(error.localizedDescription)"
+            // Try system speech anyway: an existing output route may still work.
+        }
+        if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
+        activeUtterance = utterance
+        speechIsActive = false
         speaker.speak(utterance)
-        status = "Speaking using current iPhone audio route: \(audioRoute). Pair Solos as an audio headset first."
+        status = "Jarvis voice queued via \(audioRoute) (\(utterance.voice?.name ?? "system voice"), \(quality))"
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+        guard utterance === activeUtterance else { return }
+        speechIsActive = true
+        status = "Jarvis speaking via \(audioRoute)"
+    }
+
+    private func finishSpeech(_ utterance: AVSpeechUtterance) {
+        // Cancellation of an older utterance must not finish the new answer.
+        guard utterance === activeUtterance else { return }
+        activeUtterance = nil
+        speechIsActive = false
+        onSpeechCompleted?()
+        onHUDSpeechCompleted?()
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        onSpeechCompleted?()
+        finishSpeech(utterance)
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        onSpeechCompleted?()
+        finishSpeech(utterance)
     }
 
     func stream(_ aStream: Stream, handle eventCode: Stream.Event) {
