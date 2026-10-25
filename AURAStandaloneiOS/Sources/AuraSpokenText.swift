@@ -39,7 +39,7 @@ enum AuraSpokenText {
             if char == ",", previous?.isNumber == true {
                 let following = chars.dropFirst(index + 1).prefix(4)
                 if following.prefix(3).count == 3,
-                   following.prefix(3).allSatisfy(\\.isNumber),
+                   following.prefix(3).allSatisfy(\.isNumber),
                    (following.count == 3 || !following[following.index(following.startIndex, offsetBy: 3)].isNumber) {
                     continue
                 }
@@ -47,7 +47,7 @@ enum AuraSpokenText {
             if char == "&" { words.append(" and "); continue }
             if char == "%" { words.append(" percent "); continue }
             if char == "°" { words.append(" degrees "); continue }
-            if char == "\\n" || char == "\\t" { words.append(" "); continue }
+            if char == "\n" || char == "\t" { words.append(" "); continue }
             if char.unicodeScalars.contains(where: {
                 CharacterSet.punctuationCharacters.contains($0) ||
                 CharacterSet.symbols.contains($0) ||
