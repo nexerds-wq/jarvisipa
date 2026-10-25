@@ -242,7 +242,7 @@ struct AuraContentView: View {
             Text(voice.localAlertStatus)
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.65))
-            Text("Off by default. Enabling asks for approximate location and uses online weather or city news services. Headlines are not verified to be on your street. Checks run about every 15 minutes while AURA is active, not as a guaranteed emergency alert system.")
+            Text("Off by default. Enabling asks for approximate location. Checks run about every 15 minutes while AURA is active, not as a guaranteed emergency alert system. Headlines are city-level, not verified street-level reporting. Forecast data: Open-Meteo (CC BY 4.0); warnings: National Weather Service; headlines: Google News.")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.65))
         }
