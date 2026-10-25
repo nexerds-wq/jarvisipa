@@ -1,0 +1,73 @@
+name: Build standalone JARVIS AURA iPhone IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - aura-iphone-standalone
+    paths:
+      - 'AURAStandaloneiOS/**'
+      - '.github/workflows/build-aura-ondevice-ipa.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ios-unsigned:
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: AURAStandaloneiOS
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          if [ -d /Applications/Xcode_26.3.app/Contents/Developer ]; then
+            sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          fi
+          xcodebuild -version
+
+      - name: Install XcodeGen if needed
+        run: |
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+
+      - name: Generate iPhone project
+        run: xcodegen generate
+
+      - name: Build unsigned iPhone app
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project AURAStandalone.xcodeproj \
+            -scheme AURAStandalone \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/aura-standalone-build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package IPA for separate signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/aura-standalone-build/Build/Products/Release-iphoneos/AURAStandalone.app"
+          test -d "$APP"
+          mkdir -p Payload
+          ditto "$APP" Payload/AURAStandalone.app
+          zip -qry AURA_On_Device_Unsigned.ipa Payload
+          unzip -t AURA_On_Device_Unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AURA_On_Device_Unsigned_IPA
+          path: AURAStandaloneiOS/AURA_On_Device_Unsigned.ipa
+          compression-level: 0
+          if-no-files-found: error
