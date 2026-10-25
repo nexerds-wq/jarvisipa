@@ -62,7 +62,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     @Published var personality: AuraPersonality = .natural
     @Published var speakReplies = true
     @Published var handsFree = false
-    @Published var selectedVoice = "Automatic"
+    @Published var selectedVoice = UserDefaults.standard.string(forKey: "AuraPreferredVoice") ?? "Automatic" {
+        didSet { UserDefaults.standard.set(selectedVoice, forKey: "AuraPreferredVoice") }
+    }
 
     private let audioEngine = AVAudioEngine()
     private let synthesizer = AVSpeechSynthesizer()
@@ -71,7 +73,6 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var session: LanguageModelSession?
     private var generationTask: Task<Void, Never>?
-    private var spokenCharacters = 0
     private var hasMicrophoneTap = false
     private var restartTask: Task<Void, Never>?
     private var didActivateAutomatically = false
@@ -80,7 +81,33 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var lastSpeechUpdate = Date.distantPast
     private let musicPlayer = MPMusicPlayerController.systemMusicPlayer
 
-    var availableVoices: [String] { ["Automatic"] + AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }.map { $0.identifier }.sorted() }
+    private var englishVoices: [AVSpeechSynthesisVoice] {
+        AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.lowercased().hasPrefix("en") }
+            .sorted { left, right in
+                if left.quality.rawValue != right.quality.rawValue {
+                    return left.quality.rawValue > right.quality.rawValue
+                }
+                if (left.language == "en-US") != (right.language == "en-US") {
+                    return left.language == "en-US"
+                }
+                return left.name.localizedStandardCompare(right.name) == .orderedAscending
+            }
+    }
+
+    var availableVoices: [String] { ["Automatic"] + englishVoices.map(\.identifier) }
+
+    func voiceLabel(for id: String) -> String {
+        guard id != "Automatic" else { return "Best installed voice (prefer Premium)" }
+        guard let voice = englishVoices.first(where: { $0.identifier == id }) else { return "Unavailable voice" }
+        let quality: String
+        switch voice.quality {
+        case .premium: quality = "Premium"
+        case .enhanced: quality = "Enhanced"
+        default: quality = "Standard"
+        }
+        return "\(voice.name) • \(quality) • \(voice.language)"
+    }
 
     override init() {
         super.init()
@@ -92,7 +119,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         switch SystemLanguageModel.default.availability {
         case .available:
             modelReady = true
-            if !isListening && !isGenerating { status = "Ready. Tap the microphone and talk naturally." }
+            if !isListening && !isGenerating { status = handsFree ? "Ready for Hey Jarvis." : "Ready. Say Hey Jarvis or tap the microphone." }
         case .unavailable:
             modelReady = false
             status = "Apple Intelligence isn't ready. Update to iOS 26+, enable Apple Intelligence in Settings, allow its download, then tap Check."
@@ -253,7 +280,6 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         if handlePhoneCommand(prompt) { scheduleRestart(); return }
         heardText = prompt
         reply = ""
-        spokenCharacters = 0
         isGenerating = true
         status = "JARVIS is thinking on your iPhone..."
 
@@ -266,10 +292,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 for try await fragment in stream {
                     try Task.checkCancellation()
                     self.reply = fragment.content
-                    self.speakCompletedPhrases(final: false)
                     self.status = "Responding on-device..."
                 }
-                self.speakCompletedPhrases(final: true)
+                self.speakFullReply()
                 self.isGenerating = false
                 self.status = self.synthesizer.isSpeaking ? "JARVIS is speaking..." : "Ready for another question."
                 if !self.synthesizer.isSpeaking { self.scheduleRestart() }
@@ -287,43 +312,48 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         }
     }
 
-    private func speakCompletedPhrases(final: Bool) {
-        guard speakReplies else { return }
-        if spokenCharacters > reply.count { spokenCharacters = reply.count }
-        let pending = String(reply.dropFirst(spokenCharacters))
-        guard !pending.isEmpty else { return }
+    // Speaking one complete utterance avoids stitched-together, robotic sentence breaks.
+    private func speakFullReply() {
+        guard speakReplies, let utterance = makeUtterance(reply) else { return }
+        configureSpeechAudio()
+        synthesizer.speak(utterance)
+    }
 
-        var completedLength = 0
-        let characters = Array(pending)
-        for index in characters.indices {
-            let char = characters[index]
-            if ".!?".contains(char) && (index == characters.count - 1 || characters[index + 1].isWhitespace) {
-                completedLength = index + 1
-            }
-        }
-        if final { completedLength = characters.count }
-        if completedLength == 0 { return }
+    private func makeUtterance(_ text: String) -> AVSpeechUtterance? {
+        let spokenText = AuraSpokenText.prepare(text)
+        guard !spokenText.isEmpty else { return nil }
+        let utterance = AVSpeechUtterance(string: spokenText)
+        utterance.voice = (selectedVoice == "Automatic" ? nil : AVSpeechSynthesisVoice(identifier: selectedVoice))
+            ?? englishVoices.first
+            ?? AVSpeechSynthesisVoice(language: "en-US")
+        utterance.rate = personality.rate
+        utterance.pitchMultiplier = personality.pitch
+        utterance.preUtteranceDelay = 0
+        utterance.postUtteranceDelay = 0.08
+        return utterance
+    }
 
-        let phrase = String(characters.prefix(completedLength)).trimmingCharacters(in: .whitespacesAndNewlines)
-        spokenCharacters += completedLength
-        guard !phrase.isEmpty else { return }
-
+    private func configureSpeechAudio() {
         do {
             let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .duckOthers])
+            try audio.setCategory(.playAndRecord, mode: .default,
+                                  options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
             try audio.setActive(true)
         } catch {
             status = "Audio output issue: \(error.localizedDescription)"
         }
+    }
 
-        let utterance = AVSpeechUtterance(string: phrase)
-        let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.lowercased().hasPrefix("en") }
-        utterance.voice = (selectedVoice == "Automatic" ? nil : AVSpeechSynthesisVoice(identifier: selectedVoice))
-            ?? voices.sorted { $0.quality.rawValue > $1.quality.rawValue }.first
-            ?? AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = personality.rate
-        utterance.pitchMultiplier = personality.pitch
-        utterance.postUtteranceDelay = 0
+    func previewVoice() {
+        guard !isGenerating else { return }
+        stopMicrophone()
+        synthesizer.stopSpeaking(at: .immediate)
+        guard let utterance = makeUtterance("Hey, I'm Jarvis. I'm here whenever you need me. What should we do next?") else {
+            scheduleRestart()
+            return
+        }
+        configureSpeechAudio()
+        status = "Previewing the selected voice..."
         synthesizer.speak(utterance)
     }
 
@@ -339,12 +369,13 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     }
 
     func newConversation() {
+        let wasHandsFree = handsFree
         interrupt()
         session = nil
         heardText = ""
         reply = ""
-        spokenCharacters = 0
         checkAvailability()
+        if wasHandsFree { setHandsFree(true) }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
