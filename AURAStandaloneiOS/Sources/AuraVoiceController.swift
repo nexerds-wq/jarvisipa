@@ -2,6 +2,8 @@ import AVFoundation
 import Foundation
 import FoundationModels
 import Speech
+import MediaPlayer
+import UIKit
 import SwiftUI
 
 enum AuraPersonality: String, CaseIterable, Identifiable {
@@ -59,6 +61,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     @Published var reply = ""
     @Published var personality: AuraPersonality = .natural
     @Published var speakReplies = true
+    @Published var handsFree = false
+    @Published var selectedVoice = "Automatic"
 
     private let audioEngine = AVAudioEngine()
     private let synthesizer = AVSpeechSynthesizer()
@@ -69,6 +73,11 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var generationTask: Task<Void, Never>?
     private var spokenCharacters = 0
     private var hasMicrophoneTap = false
+    private var restartTask: Task<Void, Never>?
+    private var lastProcessedSpeech = ""
+    private let musicPlayer = MPMusicPlayerController.systemMusicPlayer
+
+    var availableVoices: [String] { ["Automatic"] + AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }.map { $0.identifier }.sorted() }
 
     override init() {
         super.init()
@@ -146,10 +155,12 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                     guard let self, self.isListening else { return }
                     if let result {
                         self.heardText = result.bestTranscription.formattedString
+                        if self.handsFree && result.isFinal { self.finishListeningAndRespond() }
                     }
                     if let error {
                         self.status = "Listening ended: \(error.localizedDescription). Tap to try again."
                         self.stopMicrophone()
+                        self.scheduleRestart()
                     }
                 }
             }
@@ -176,9 +187,14 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         let text = heardText.trimmingCharacters(in: .whitespacesAndNewlines)
         stopMicrophone()
         if text.isEmpty {
-            status = "I didn't catch anything. Try speaking closer to your iPhone."
+            status = "I didn't catch anything."
+            scheduleRestart()
+        } else if handsFree && !text.lowercased().contains("hey aura") && !text.lowercased().contains("hey jarvis") {
+            status = "Listening for Hey AURA or Hey Jarvis..."
+            scheduleRestart()
         } else {
-            send(text)
+            let cleaned = text.replacingOccurrences(of: "(?i)hey (aura|jarvis)[, ]*", with: "", options: .regularExpression)
+            send(cleaned.isEmpty ? "Hello" : cleaned)
         }
     }
 
@@ -202,6 +218,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         stopMicrophone()
         synthesizer.stopSpeaking(at: .immediate)
         generationTask?.cancel()
+        if handlePhoneCommand(prompt) { scheduleRestart(); return }
         heardText = prompt
         reply = ""
         spokenCharacters = 0
@@ -223,6 +240,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 self.speakCompletedPhrases(final: true)
                 self.isGenerating = false
                 self.status = self.synthesizer.isSpeaking ? "JARVIS is speaking..." : "Ready for another question."
+                if !self.synthesizer.isSpeaking { self.scheduleRestart() }
             } catch is CancellationError {
                 self.isGenerating = false
                 self.status = "Interrupted. Ready when you are."
@@ -232,6 +250,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 if self.reply.isEmpty { self.reply = "Sorry, something interrupted that response. Please try again." }
                 // A new session clears excessive context or a failed generation.
                 self.session = nil
+                self.scheduleRestart()
             }
         }
     }
@@ -267,17 +286,20 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
         let utterance = AVSpeechUtterance(string: phrase)
         let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.lowercased().hasPrefix("en") }
-        utterance.voice = voices.sorted { $0.quality.rawValue > $1.quality.rawValue }.first
+        utterance.voice = (selectedVoice == "Automatic" ? nil : AVSpeechSynthesisVoice(identifier: selectedVoice))
+            ?? voices.sorted { $0.quality.rawValue > $1.quality.rawValue }.first
             ?? AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = personality.rate
         utterance.pitchMultiplier = personality.pitch
-        utterance.postUtteranceDelay = 0.05
+        utterance.postUtteranceDelay = 0
         synthesizer.speak(utterance)
     }
 
     func interrupt() {
         generationTask?.cancel()
         generationTask = nil
+        restartTask?.cancel()
+        handsFree = false
         stopMicrophone()
         synthesizer.stopSpeaking(at: .immediate)
         isGenerating = false
@@ -296,6 +318,37 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         if !isGenerating && !synthesizer.isSpeaking && !isListening {
             status = "Ready for another question."
+            scheduleRestart()
         }
+    }
+
+    func setHandsFree(_ enabled: Bool) {
+        handsFree = enabled
+        restartTask?.cancel()
+        if enabled { authorizeMicrophone() } else { stopMicrophone() }
+    }
+
+    private func scheduleRestart() {
+        guard handsFree, !isListening, !isGenerating, !synthesizer.isSpeaking else { return }
+        restartTask?.cancel()
+        restartTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, let self, self.handsFree, !self.isListening, !self.isGenerating else { return }
+            self.authorizeMicrophone()
+        }
+    }
+
+    private func handlePhoneCommand(_ prompt: String) -> Bool {
+        let lower = prompt.lowercased()
+        if lower.contains("pause music") || lower.contains("stop music") { musicPlayer.pause(); reply = "Music paused."; return true }
+        if lower.contains("next song") || lower.contains("skip song") { musicPlayer.skipToNextItem(); reply = "Skipping."; return true }
+        if lower.contains("previous song") { musicPlayer.skipToPreviousItem(); reply = "Going back."; return true }
+        if lower.contains("play music") || lower.contains("resume music") { musicPlayer.play(); reply = "Playing your music."; return true }
+        if lower.contains("alarm") && (lower.contains("set") || lower.contains("open") || lower.contains("create")) {
+            reply = "Opening Clock so you can set your alarm. iOS does not let this app directly create Clock alarms."
+            if let url = URL(string: "clock-alarm://") { UIApplication.shared.open(url) }
+            return true
+        }
+        return false
     }
 }
