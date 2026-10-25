@@ -200,8 +200,21 @@ struct AuraContentView: View {
             Toggle("Always-ready Hey Jarvis listening", isOn: Binding(get: { voice.handsFree }, set: { voice.setHandsFree($0) }))
                 .tint(.cyan)
             Picker("iPhone voice", selection: $voice.selectedVoice) {
-                ForEach(voice.availableVoices, id: \.self) { name in Text(name == "Automatic" ? "Best available" : name).tag(name) }
+                ForEach(voice.availableVoices, id: \.self) { identifier in
+                    Text(voice.voiceLabel(for: identifier)).tag(identifier)
+                }
             }
+            Button {
+                voice.previewVoice()
+            } label: {
+                Label("Hear voice preview", systemImage: "speaker.wave.2.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.cyan)
+            .disabled(voice.isGenerating)
+            Text("For a more natural sound, choose a Premium or Enhanced English voice. Download extra voices in iPhone Settings → Accessibility → Spoken Content → Voices.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.65))
             Button("Play music") { voice.send("play music") }
                 .buttonStyle(.bordered)
             Button("Open iPhone alarms") { voice.send("open alarm") }
@@ -215,7 +228,7 @@ struct AuraContentView: View {
     }
 
     private var footer: some View {
-        Text("No PC • No IP address • No API subscription\nUses Apple's on-device language model and system voices.\nHands-free wake listening works while the app stays active, not guaranteed when locked. Music controls use the iPhone system player. Clock alarms require confirmation in Clock. Requires iOS 26+ and Apple Intelligence.")
+        Text("No PC • No IP address • No API subscription\nUses Apple's on-device AI and installed iPhone voices. Speech punctuation is removed before playback.\nHands-free wake listening works while the app stays active, not guaranteed when locked. Music controls use the iPhone system player. Clock alarms require confirmation in Clock. Requires iOS 26+ and Apple Intelligence.")
             .font(.system(size: 11))
             .multilineTextAlignment(.center)
             .foregroundStyle(.white.opacity(0.5))
