@@ -1,8 +1,10 @@
 import Foundation
+import HuggingFace
 import MLX
 import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
+import Tokenizers
 
 struct VoiceReply {
     let text: String
