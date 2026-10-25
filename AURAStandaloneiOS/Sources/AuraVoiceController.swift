@@ -6,6 +6,25 @@ import MediaPlayer
 import UIKit
 import SwiftUI
 
+// AVAudioEngine's tap runs on an audio thread. This bridge swaps speech requests
+// without tearing down the input hardware between recognition cycles.
+private final class AuraAudioBridge {
+    private let lock = NSLock()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+
+    func setRequest(_ next: SFSpeechAudioBufferRecognitionRequest?) {
+        lock.lock()
+        request = next
+        lock.unlock()
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        request?.append(buffer)
+        lock.unlock()
+    }
+}
+
 enum AuraPersonality: String, CaseIterable, Identifiable {
     case warm = "Warm"
     case natural = "Natural"
@@ -22,7 +41,11 @@ enum AuraPersonality: String, CaseIterable, Identifiable {
         you have human feelings or real-world abilities you don't possess.
         Speak in everyday conversational English with contractions and varied sentence
         length. Don't use markdown, emojis, numbered lists, asterisks, or stage directions.
-        Answer quickly. Default to one or two short spoken sentences; only go longer when asked.\n        Start with the answer immediately. Avoid filler, preambles, and unnecessary detail.
+        Answer quickly. Default to one or two short spoken sentences; only go longer when asked.
+        Start with the answer immediately. Avoid filler, preambles, and unnecessary detail.
+        Be emotionally perceptive: respond with more tenderness if the person is sad,
+        more energy if they are excited, and quiet seriousness for safety concerns.
+        Avoid canned reassurances; sound like an engaged, spontaneous companion.
         Ask relevant follow-up questions sometimes. If unsure, say so honestly.
         You have no internet, no external tools, no ability to control devices, and no
         knowledge of events after your on-device model's training data.
@@ -62,11 +85,13 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     @Published var personality: AuraPersonality = .natural
     @Published var speakReplies = true
     @Published var handsFree = false
+    @Published private(set) var followUpReady = false
     @Published var selectedVoice = UserDefaults.standard.string(forKey: "AuraPreferredVoice") ?? "Automatic" {
         didSet { UserDefaults.standard.set(selectedVoice, forKey: "AuraPreferredVoice") }
     }
 
     private let audioEngine = AVAudioEngine()
+    private let audioBridge = AuraAudioBridge()
     private let synthesizer = AVSpeechSynthesizer()
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -82,6 +107,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var restartTask: Task<Void, Never>?
     private var didActivateAutomatically = false
     private var silenceTask: Task<Void, Never>?
+    private var followUpExpiryTask: Task<Void, Never>?
     private var recognitionCycle: UInt64 = 0
     private var lastSpeechUpdate = Date.distantPast
     private var lastVisibleReplyUpdate = Date.distantPast
@@ -118,6 +144,10 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     override init() {
         super.init()
         synthesizer.delegate = self
+        NotificationCenter.default.addObserver(self, selector: #selector(audioSessionInterrupted(_:)),
+            name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance())
+        NotificationCenter.default.addObserver(self, selector: #selector(audioRouteChanged(_:)),
+            name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance())
         checkAvailability()
     }
 
@@ -137,7 +167,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
     func microphoneTapped() {
         if isListening {
-            finishListeningAndRespond()
+            // A manual tap sends the current transcript even without the wake word.
+            finishListeningAndRespond(manual: true)
         } else {
             authorizeMicrophone()
         }
@@ -162,34 +193,61 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         }
     }
 
+    private func ensureAudioInput() throws {
+        if audioEngine.isRunning { return }
+        let audio = AVAudioSession.sharedInstance()
+        try audio.setCategory(.playAndRecord, mode: .default,
+                              options: [.defaultToSpeaker, .allowBluetoothA2DP, .mixWithOthers])
+        try audio.setActive(true)
+
+        let input = audioEngine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw NSError(domain: "AURA", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "No valid iPhone microphone input is available."
+            ])
+        }
+        if !hasMicrophoneTap {
+            let bridge = audioBridge
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+                bridge.append(buffer)
+            }
+            hasMicrophoneTap = true
+        }
+        audioEngine.prepare()
+        try audioEngine.start()
+    }
+
     private func startListening() {
-        guard let recognizer else {
-            status = "English speech recognition isn't available on this iPhone. You can still type."
+        guard !isGenerating, queuedSpeechCount == 0, !synthesizer.isSpeaking else { return }
+        guard !isListening else { return }
+        guard let recognizer, recognizer.isAvailable else {
+            status = "Speech recognition isn't available. I'll retry automatically."
+            consecutiveMicFailures += 1
+            scheduleRestart()
             return
         }
         guard recognizer.supportsOnDeviceRecognition else {
-            status = "Offline English speech recognition isn't available right now. You can still type to JARVIS."
+            status = "Offline English recognition isn't installed. Check Dictation in Settings."
             return
         }
 
-        synthesizer.stopSpeaking(at: .immediate)
-        stopMicrophone()
+        stopRecognition()
         heardText = ""
         recognitionCycle &+= 1
         let cycle = recognitionCycle
-        status = handsFree ? "Listening for Hey Jarvis or Hey AURA..." : "Listening... Tap Finish when done."
-
         do {
-            let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playAndRecord, mode: .default,
-                                  options: [.defaultToSpeaker, .allowBluetoothA2DP, .mixWithOthers])
-            try audio.setActive(true)
-
+            try ensureAudioInput()
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
             request.requiresOnDeviceRecognition = true
             request.taskHint = .dictation
             recognitionRequest = request
+            audioBridge.setRequest(request)
+            isListening = true
+            status = handsFree
+                ? (followUpReady ? "Conversation open. Talk naturally..." : "Listening for Hey Jarvis...")
+                : "Listening... Tap to send."
 
             recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
                 Task { @MainActor [weak self] in
@@ -199,85 +257,97 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                         if incoming != self.heardText {
                             self.heardText = incoming
                             self.lastSpeechUpdate = Date()
-                            if self.handsFree { self.scheduleSilenceFinish(cycle: cycle) }
+                            if self.handsFree && self.shouldAccept(incoming) {
+                                self.followUpExpiryTask?.cancel()
+                                self.scheduleSilenceFinish(cycle: cycle)
+                            }
                         }
-                        if self.handsFree && result.isFinal { self.finishListeningAndRespond() }
+                        if result.isFinal {
+                            if self.shouldAccept(self.heardText) {
+                                self.finishListeningAndRespond()
+                            } else {
+                                self.startNewRecognitionCycle()
+                            }
+                            return
+                        }
                     }
                     if let error {
-                        // Ignore callbacks from an intentionally cancelled recognition task.
-                        guard self.recognitionCycle == cycle else { return }
-                        self.status = "Mic reconnecting: \(error.localizedDescription)"
                         self.consecutiveMicFailures += 1
-                        self.stopMicrophone()
+                        self.status = "Speech recognition renewing: \(error.localizedDescription)"
+                        self.stopRecognition()
                         self.scheduleRestart()
                     }
                 }
             }
-
-            let input = audioEngine.inputNode
-            let format = input.outputFormat(forBus: 0)
-            guard format.sampleRate > 0, format.channelCount > 0 else {
-                throw NSError(domain: "AURA", code: 1, userInfo: [NSLocalizedDescriptionKey: "No working microphone input was found."])
-            }
-            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-                request.append(buffer)
-            }
-            hasMicrophoneTap = true
-            audioEngine.prepare()
-            try audioEngine.start()
-            isListening = true
             consecutiveMicFailures = 0
+
+            // iOS limits individual recognition tasks. Renew the recognizer while
+            // retaining the already-running microphone engine and audio tap.
             if handsFree {
                 Task { [weak self] in
                     try? await Task.sleep(for: .seconds(48))
                     guard let self, self.isListening, self.recognitionCycle == cycle else { return }
-                    self.finishListeningAndRespond()
+                    if self.shouldAccept(self.heardText) {
+                        self.finishListeningAndRespond()
+                    } else {
+                        self.startNewRecognitionCycle()
+                    }
                 }
             }
         } catch {
-            stopMicrophone()
+            stopRecognition()
+            stopAudioInput()
             consecutiveMicFailures += 1
-            status = "Mic reconnecting: \(error.localizedDescription)"
+            status = "Microphone retrying: \(error.localizedDescription)"
             scheduleRestart()
         }
     }
 
-    private func finishListeningAndRespond() {
+    private func shouldAccept(_ text: String) -> Bool {
+        if !handsFree { return true }
+        let words = text.lowercased()
+        return followUpReady ||
+            words.contains("hey jarvis") || words.contains("hey aura")
+    }
+
+    private func startNewRecognitionCycle() {
+        stopRecognition()
+        if handsFree { scheduleRestart() }
+    }
+
+    private func finishListeningAndRespond(manual: Bool = false) {
         let text = heardText.trimmingCharacters(in: .whitespacesAndNewlines)
-        stopMicrophone()
-        if text.isEmpty {
-            status = "I didn't catch anything."
+        let accepted = manual || shouldAccept(text)
+        stopRecognition()
+        if text.isEmpty || !accepted {
+            status = "Listening for Hey Jarvis..."
             scheduleRestart()
-        } else if handsFree && !text.lowercased().contains("hey aura") && !text.lowercased().contains("hey jarvis") {
-            status = "Listening for Hey AURA or Hey Jarvis..."
-            scheduleRestart()
-        } else {
-            let cleaned = text.replacingOccurrences(of: "(?i)hey (aura|jarvis)[, ]*", with: "", options: .regularExpression)
-            send(cleaned.isEmpty ? "Hello" : cleaned)
+            return
         }
+        followUpExpiryTask?.cancel()
+        followUpReady = false
+        let cleaned = text.replacingOccurrences(
+            of: "(?i)hey (aura|jarvis)[, ]*", with: "", options: .regularExpression
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        send(cleaned.isEmpty ? "Hello" : cleaned)
     }
 
     private func scheduleSilenceFinish(cycle: UInt64) {
         silenceTask?.cancel()
         silenceTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(800))
-            guard !Task.isCancelled, let self, self.isListening, self.recognitionCycle == cycle else { return }
-            let phrase = self.heardText.lowercased()
-            if phrase.contains("hey aura") || phrase.contains("hey jarvis") {
-                self.finishListeningAndRespond()
-            }
+            try? await Task.sleep(for: .milliseconds(1350))
+            guard !Task.isCancelled, let self, self.isListening,
+                  self.recognitionCycle == cycle else { return }
+            if self.shouldAccept(self.heardText) { self.finishListeningAndRespond() }
         }
     }
 
-    private func stopMicrophone() {
+    private func stopRecognition() {
         silenceTask?.cancel()
         silenceTask = nil
         recognitionCycle &+= 1
-        if audioEngine.isRunning { audioEngine.stop() }
-        if hasMicrophoneTap {
-            audioEngine.inputNode.removeTap(onBus: 0)
-            hasMicrophoneTap = false
-        }
+        // Stop feeding the current request before ending/canceling it.
+        audioBridge.setRequest(nil)
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         recognitionTask = nil
@@ -285,11 +355,61 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         isListening = false
     }
 
+    private func stopAudioInput() {
+        audioBridge.setRequest(nil)
+        if audioEngine.isRunning { audioEngine.stop() }
+        if hasMicrophoneTap {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            hasMicrophoneTap = false
+        }
+    }
+
+    private func stopMicrophone() {
+        stopRecognition()
+        if !handsFree { stopAudioInput() }
+    }
+
+    private func openFollowUpWindow() {
+        guard handsFree else { return }
+        followUpExpiryTask?.cancel()
+        followUpReady = true
+        scheduleRestart()
+        followUpExpiryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, let self else { return }
+            self.followUpReady = false
+            if self.isListening {
+                self.status = "Listening for Hey Jarvis..."
+            }
+        }
+    }
+
+    @objc private func audioSessionInterrupted(_ notification: Notification) {
+        guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        if type == .began {
+            stopRecognition()
+            stopAudioInput()
+            status = "Audio interrupted. Listening will resume when iOS allows it."
+        } else if handsFree {
+            scheduleRestart()
+        }
+    }
+
+    @objc private func audioRouteChanged(_ notification: Notification) {
+        guard handsFree, audioEngine.isRunning == false else { return }
+        stopRecognition()
+        stopAudioInput()
+        scheduleRestart()
+    }
+
     func send(_ message: String) {
         let prompt = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isGenerating else { return }
         guard modelReady else { checkAvailability(); return }
         stopMicrophone()
+        followUpExpiryTask?.cancel()
+        followUpReady = false
         synthesizer.stopSpeaking(at: .immediate)
         queuedSpeechCount = 0
         generationTask?.cancel()
@@ -328,7 +448,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 self.speakRemainingReply()
                 self.isGenerating = false
                 self.status = self.synthesizer.isSpeaking ? "JARVIS is speaking..." : "Ready for another question."
-                if self.queuedSpeechCount == 0 && !self.synthesizer.isSpeaking { self.scheduleRestart() }
+                if self.queuedSpeechCount == 0 && !self.synthesizer.isSpeaking { self.openFollowUpWindow() }
             } catch is CancellationError {
                 self.isGenerating = false
                 self.status = "Interrupted. Ready when you are."
@@ -338,7 +458,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 if self.reply.isEmpty { self.reply = "Sorry, something interrupted that response. Please try again." }
                 // A new session clears excessive context or a failed generation.
                 self.session = nil
-                self.scheduleRestart()
+                self.openFollowUpWindow()
             }
         }
     }
@@ -418,6 +538,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         stopMicrophone()
         synthesizer.stopSpeaking(at: .immediate)
         queuedSpeechCount = 0
+        followUpExpiryTask?.cancel()
+        followUpReady = false
+        stopAudioInput()
         isGenerating = false
         status = "Stopped. Tap the microphone whenever you're ready."
     }
@@ -436,7 +559,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         queuedSpeechCount = max(0, queuedSpeechCount - 1)
         if queuedSpeechCount == 0 && !isGenerating && !isListening {
             status = "Ready for another question."
-            scheduleRestart()
+            openFollowUpWindow()
         }
     }
 
@@ -449,13 +572,21 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     func setHandsFree(_ enabled: Bool) {
         handsFree = enabled
         restartTask?.cancel()
-        if enabled { consecutiveMicFailures = 0; authorizeMicrophone() } else { stopMicrophone() }
+        if enabled {
+            consecutiveMicFailures = 0
+            authorizeMicrophone()
+        } else {
+            followUpExpiryTask?.cancel()
+            followUpReady = false
+            stopRecognition()
+            stopAudioInput()
+        }
     }
 
     private func scheduleRestart() {
         guard handsFree, !isListening, !isGenerating, queuedSpeechCount == 0, !synthesizer.isSpeaking else { return }
         restartTask?.cancel()
-        let retryDelay = min(4000, 250 * (1 << min(consecutiveMicFailures, 4)))
+        let retryDelay = consecutiveMicFailures == 0 ? 120 : min(4000, 250 * (1 << min(consecutiveMicFailures, 4)))
         restartTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(retryDelay))
             guard !Task.isCancelled, let self, self.handsFree, !self.isListening, !self.isGenerating, self.queuedSpeechCount == 0, !self.synthesizer.isSpeaking else { return }
