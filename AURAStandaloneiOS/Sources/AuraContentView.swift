@@ -62,7 +62,7 @@ struct AuraContentView: View {
             Circle()
                 .fill(
                     RadialGradient(colors: [
-                        (voice.isListening ? Color.orange : Color.cyan).opacity(0.43),
+                        (voice.microphoneActive ? Color.orange : Color.cyan).opacity(0.43),
                         Color(red: 0.04, green: 0.16, blue: 0.29).opacity(0.35),
                         .clear
                     ], center: .center, startRadius: 0, endRadius: 93)
@@ -74,13 +74,13 @@ struct AuraContentView: View {
                     lineWidth: 7
                 )
                 .frame(width: 146, height: 146)
-            Image(systemName: voice.isListening ? "waveform" : "sparkle")
+            Image(systemName: voice.microphoneActive ? "waveform" : "sparkle")
                 .font(.system(size: 41, weight: .ultraLight))
-                .foregroundStyle(voice.isListening ? .orange : .cyan)
+                .foregroundStyle(voice.microphoneActive ? .orange : .cyan)
                 .contentTransition(.symbolEffect(.replace))
         }
         .frame(height: 250)
-        .accessibilityLabel(voice.isListening ? "Microphone listening" : "JARVIS AI ready")
+        .accessibilityLabel(voice.microphoneActive ? "Microphone is on, waiting for Hey Jarvis" : "Microphone connecting or audio interrupted")
     }
 
     private var statusCard: some View {
@@ -143,20 +143,20 @@ struct AuraContentView: View {
     private var controls: some View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
-                Image(systemName: voice.isListening ? "waveform" : "waveform.slash")
+                Image(systemName: voice.microphoneActive ? "waveform" : "waveform.slash")
                     .font(.system(size: 21, weight: .medium))
-                    .foregroundStyle(voice.isListening ? Color.green : Color.orange)
+                    .foregroundStyle(voice.microphoneActive ? Color.green : Color.orange)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(voice.isListening ? (voice.followUpReady ? "CONVERSATION OPEN" : "HEY JARVIS • LISTENING") : (voice.isGenerating ? "JARVIS IS THINKING" : "MICROPHONE CONNECTING"))
+                    Text(voice.isGenerating ? "JARVIS IS THINKING" : (voice.followUpReady ? "CONVERSATION OPEN" : (voice.microphoneActive ? "MICROPHONE ON • HEY JARVIS" : "MICROPHONE RECONNECTING")))
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .tracking(1)
-                    Text("Automatic listening • no button needed")
+                    Text("Automatic wake listening • no button needed")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.65))
                 }
                 Spacer(minLength: 0)
                 Circle()
-                    .fill(voice.isListening ? Color.green : Color.orange)
+                    .fill(voice.microphoneActive ? Color.green : Color.orange)
                     .frame(width: 9, height: 9)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -209,8 +209,6 @@ struct AuraContentView: View {
             .onChange(of: voice.personality) { _, _ in voice.newConversation() }
 
             Text("Hands-free listening starts automatically. Say Hey Jarvis to begin. After Jarvis speaks, ask a follow-up within 4 seconds without repeating the wake word; your conversation stays intact.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.65))
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.65))
             Picker("iPhone voice", selection: $voice.selectedVoice) {
