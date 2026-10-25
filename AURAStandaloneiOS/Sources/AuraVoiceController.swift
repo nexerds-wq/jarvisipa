@@ -22,7 +22,7 @@ enum AuraPersonality: String, CaseIterable, Identifiable {
         you have human feelings or real-world abilities you don't possess.
         Speak in everyday conversational English with contractions and varied sentence
         length. Don't use markdown, emojis, numbered lists, asterisks, or stage directions.
-        Usually answer in two to five spoken sentences, but go deeper when the person asks.
+        Answer quickly. Default to one or two short spoken sentences; only go longer when asked.\n        Start with the answer immediately. Avoid filler, preambles, and unnecessary detail.
         Ask relevant follow-up questions sometimes. If unsure, say so honestly.
         You have no internet, no external tools, no ability to control devices, and no
         knowledge of events after your on-device model's training data.
@@ -74,6 +74,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var session: LanguageModelSession?
     private var generationTask: Task<Void, Never>?
     private var hasMicrophoneTap = false
+    private var microphoneAuthorized = false
+    private var spokenPrefixCount = 0
+    private var startedSpeakingReply = false
     private var restartTask: Task<Void, Never>?
     private var didActivateAutomatically = false
     private var silenceTask: Task<Void, Never>?
@@ -139,6 +142,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
     private func authorizeMicrophone() {
         guard modelReady, !isGenerating else { return }
+        if microphoneAuthorized { startListening(); return }
         SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
             AVAudioSession.sharedInstance().requestRecordPermission { granted in
                 Task { @MainActor [weak self] in
@@ -147,6 +151,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                         self.status = "Allow Microphone and Speech Recognition in iPhone Settings for JARVIS AURA."
                         return
                     }
+                    self.microphoneAuthorized = true
                     self.startListening()
                 }
             }
@@ -245,7 +250,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private func scheduleSilenceFinish(cycle: UInt64) {
         silenceTask?.cancel()
         silenceTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(1500))
+            try? await Task.sleep(for: .milliseconds(800))
             guard !Task.isCancelled, let self, self.isListening, self.recognitionCycle == cycle else { return }
             let phrase = self.heardText.lowercased()
             if phrase.contains("hey aura") || phrase.contains("hey jarvis") {
@@ -280,6 +285,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         if handlePhoneCommand(prompt) { scheduleRestart(); return }
         heardText = prompt
         reply = ""
+        spokenPrefixCount = 0
+        startedSpeakingReply = false
         isGenerating = true
         status = "JARVIS is thinking on your iPhone..."
 
@@ -292,9 +299,10 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 for try await fragment in stream {
                     try Task.checkCancellation()
                     self.reply = fragment.content
+                    self.speakFirstSentenceWhenReady()
                     self.status = "Responding on-device..."
                 }
-                self.speakFullReply()
+                self.speakRemainingReply()
                 self.isGenerating = false
                 self.status = self.synthesizer.isSpeaking ? "JARVIS is speaking..." : "Ready for another question."
                 if !self.synthesizer.isSpeaking { self.scheduleRestart() }
@@ -312,9 +320,28 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         }
     }
 
-    // Speaking one complete utterance avoids stitched-together, robotic sentence breaks.
-    private func speakFullReply() {
-        guard speakReplies, let utterance = makeUtterance(reply) else { return }
+    // Start talking as soon as the first sentence arrives instead of waiting for
+    // the entire local model response. Keep at most two utterances per reply.
+    private func speakFirstSentenceWhenReady() {
+        guard speakReplies, !startedSpeakingReply else { return }
+        let chars = Array(reply)
+        guard let boundary = chars.indices.first(where: { i in
+            ".!?".contains(chars[i]) && (i + 1 == chars.count || chars[i + 1].isWhitespace)
+        }) else { return }
+        let first = String(chars.prefix(boundary + 1))
+        guard let utterance = makeUtterance(first) else { return }
+        startedSpeakingReply = true
+        spokenPrefixCount = boundary + 1
+        configureSpeechAudio()
+        synthesizer.speak(utterance)
+    }
+
+    private func speakRemainingReply() {
+        guard speakReplies else { return }
+        let chars = Array(reply)
+        guard spokenPrefixCount < chars.count else { return }
+        let remaining = String(chars.dropFirst(spokenPrefixCount))
+        guard let utterance = makeUtterance(remaining) else { return }
         configureSpeechAudio()
         synthesizer.speak(utterance)
     }
@@ -401,7 +428,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         guard handsFree, !isListening, !isGenerating, !synthesizer.isSpeaking else { return }
         restartTask?.cancel()
         restartTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(450))
+            try? await Task.sleep(for: .milliseconds(200))
             guard !Task.isCancelled, let self, self.handsFree, !self.isListening, !self.isGenerating else { return }
             self.authorizeMicrophone()
         }
