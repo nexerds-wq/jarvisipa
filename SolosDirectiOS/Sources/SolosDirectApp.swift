@@ -8,6 +8,7 @@ import ContactsUI
 struct SolosDirectApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var phone = SolosPhoneController()
+    @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = true
     var body: some Scene {
         WindowGroup {
             JarvisHUDHome(phone: phone)
@@ -17,11 +18,10 @@ struct SolosDirectApp: App {
                     if phase == .active {
                         phone.refreshStepsOnly()
                         phone.accessory.refresh()
-                        if UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
+                        if keepJarvisListening {
                             phone.resumeAfterScreenUnlock()
                         }
-                    } else if phase == .background &&
-                                !UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") {
+                    } else if phase == .background && !keepJarvisListening {
                         phone.stopListening()
                     }
                 }

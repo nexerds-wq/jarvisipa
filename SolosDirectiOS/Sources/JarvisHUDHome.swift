@@ -112,7 +112,7 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
     @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = false
     @AppStorage("jarvisMicrophoneSource") private var microphoneSource = "bluetooth"
-    @State private var speakReplies = true
+    @AppStorage("jarvisSpeakAnswers") private var speakReplies = true
     @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = true
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let names = ["DASHBOARD","NAVIGATION","CAPTIONS","TRANSLATE","MESSAGES","JARVIS","TIMERS"]
@@ -152,8 +152,8 @@ struct JarvisHUDHome: View {
         }
         .overlay {
             JarvisVoiceBorder(level:phone.microphoneLevel,
-                              speaking:phone.jarvisVoiceActive,
-                              listening:phone.listening)
+                              userSpeaking:phone.userVoiceActive,
+                              jarvisSpeaking:accessory.speechIsActive)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -231,7 +231,7 @@ struct JarvisHUDHome: View {
             handsFree.onModeChange = { newMode in selectMode(newMode) }
             phone.onHUDVoiceCommand = { spoken in routeVoiceHUDCommand(spoken,wakeAlreadyVerified:true) }
             accessory.onAccessoryPacket = { data in handsFree.input(data) }
-            accessory.onSpeechCompleted = {
+            accessory.onHUDSpeechCompleted = {
                 DispatchQueue.main.async {
                     guard jarvisSpeaking else { return }
                     jarvisSpeaking = false
@@ -292,7 +292,7 @@ struct JarvisHUDHome: View {
             // capture or the HUD connection. iOS owns final suspension policy.
             guard UIApplication.shared.applicationState == .active else { return }
             phone.onHUDVoiceCommand = nil
-            accessory.onSpeechCompleted = nil
+            accessory.onHUDSpeechCompleted = nil
             handsFree.stop()
             captionWakeWork?.cancel()
             captionFlushWork?.cancel()
@@ -337,6 +337,10 @@ struct JarvisHUDHome: View {
         }
         .onChange(of: allowOnlineRecognition) { _, _ in
             if mode == 2 || mode == 3 { startCaptioning() }
+            else if keepJarvisListening {
+                phone.stopListening()
+                phone.startListening()
+            }
         }
         .onChange(of: preferPhoneMicrophone) { _, _ in
             if mode == 2 || mode == 3 { startCaptioning() }
@@ -802,15 +806,34 @@ struct JarvisHUDHome: View {
 
     private var jarvisPanel: some View {
         section("JARVIS • YOUR AI") {
+            HStack(spacing:14) {
+                Label(phone.userVoiceActive ? "YOU SPEAKING" : "BLUE • YOUR VOICE",
+                      systemImage:"waveform")
+                    .foregroundStyle(phone.userVoiceActive ? .blue : .secondary)
+                Label(accessory.speechIsActive ? "JARVIS SPEAKING" : "ORANGE • JARVIS",
+                      systemImage:"speaker.wave.2.fill")
+                    .foregroundStyle(accessory.speechIsActive ? .orange : .secondary)
+            }
+            .font(.caption2.bold())
+            .accessibilityElement(children:.combine)
             HStack(spacing:8) {
-                Circle().fill(companionBusy ? .orange : .green)
+                Circle().fill(companionBusy || accessory.speechIsActive ? .orange : .green)
                     .frame(width:9,height:9)
-                Text(companionBusy ? "Thinking..." : (jarvisSpeaking ? "Speaking..." : "Ready to talk"))
+                Text(companionBusy ? "Thinking..." : (accessory.speechIsActive ? "Speaking..." : "Ready to talk"))
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("VOICE TEST") {
-                    accessory.speakCompanion("Hey. I'm Jarvis. Tell me what you're working on, and we'll figure it out together.",style:"JARVIS")
+                    phone.speakExternalReply("Hey. I'm Jarvis. Tell me what you're working on, and we'll figure it out together.",companion:true)
                 }.font(.caption)
+            }
+            Text(phone.voiceStatus).font(.caption).foregroundStyle(.secondary)
+            if !phone.transcribed.isEmpty {
+                Text("Last heard: " + phone.transcribed)
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+            }
+            if phone.aiStatus.hasPrefix("Apple Intelligence unavailable") ||
+               phone.aiStatus.hasPrefix("On-device JARVIS error") {
+                Text(phone.aiStatus).font(.caption).foregroundStyle(.orange)
             }
             TextField("Ask Jarvis anything...",text:$companionInput,axis:.vertical)
                 .lineLimit(1...4).textFieldStyle(.roundedBorder)
@@ -1009,7 +1032,7 @@ struct JarvisHUDHome: View {
                         emotionCues.stop()
                         if mode == 2 { captions.stop() }
                         jarvisSpeaking = true
-                        accessory.speakCompanion(reply,style:"JARVIS")
+                        phone.speakExternalReply(reply,companion:true)
                     }
                     drawHUD()
                 }
@@ -1516,7 +1539,7 @@ struct JarvisHUDHome: View {
                         answer = response
                         aiBusy = false
                         drawHUD()
-                        if speakReplies { accessory.speak(response) }
+                        if speakReplies { phone.speakExternalReply(response) }
                     }
                 } catch {
                     await MainActor.run {
@@ -1672,35 +1695,45 @@ struct JarvisHUDHome: View {
 }
 
 
-// The border belongs to the Jarvis app window. iOS does not allow a
-// persistent third-party overlay above the Home Screen or other apps.
+// Two independent, voice-reactive edges: blue for microphone speech and
+// orange for actual TTS playback. Drawn only over this app's own window.
 private struct JarvisVoiceBorder: View {
     let level: Double
-    let speaking: Bool
-    let listening: Bool
-    @State private var breathing = false
-
-    private var tint: Color {
-        speaking ? Color(red:1.0,green:0.43,blue:0.08) :
-        Color(red:0.06,green:0.53,blue:1.0)
-    }
+    let userSpeaking: Bool
+    let jarvisSpeaking: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geometry in
-            let strength = speaking ? (breathing ? 0.95 : 0.55) :
-                           (listening ? min(1.0,0.18 + level * 0.82) : 0.06)
-            let corner = min(55.0,geometry.size.width * 0.12)
-            RoundedRectangle(cornerRadius:corner,style:.continuous)
-                .stroke(tint.opacity(0.35 + strength * 0.65),
-                        lineWidth:2.5 + strength * 2.0)
-                .shadow(color:tint.opacity(strength * 0.9),
-                        radius:5 + strength * 15)
-                .padding(3)
-                .animation(.easeOut(duration:0.12),value:level)
-                .animation(.easeInOut(duration:0.35),value:speaking)
+            TimelineView(.animation(minimumInterval:1.0/30.0,
+                                    paused:reduceMotion || !(userSpeaking || jarvisSpeaking))) { context in
+                let time = context.date.timeIntervalSinceReferenceDate
+                let blueBeat = reduceMotion ? 0.65 : abs(sin(time * 22))
+                let orangeBeat = reduceMotion ? 0.65 : abs(sin(time * 18))
+                let bluePower = userSpeaking ? min(1.0,0.45 + level * 1.4) : 0
+                let orangePower = jarvisSpeaking ? 1.0 : 0
+                let corner = min(48.0,geometry.size.width * 0.12)
+                ZStack {
+                    // Outside ring, driven by speech-synthesizer start/finish.
+                    RoundedRectangle(cornerRadius:corner,style:.continuous)
+                        .stroke(Color.orange.opacity(jarvisSpeaking ? 0.68 + 0.32 * orangeBeat : 0.13),
+                                lineWidth:jarvisSpeaking ? 4.5 + 3.0 * orangeBeat : 1.5)
+                        .shadow(color:.orange.opacity(orangePower * (0.55 + 0.4 * orangeBeat)),
+                                radius:8 + 21 * orangePower * orangeBeat)
+                        .padding(3)
+                        .scaleEffect(1 + orangePower * orangeBeat * 0.009)
+                        .offset(x:reduceMotion ? 0 : orangePower * sin(time * 45) * 1.5)
+                    // Inside ring, driven by the actual mic audio energy.
+                    RoundedRectangle(cornerRadius:corner - 5,style:.continuous)
+                        .stroke(Color.blue.opacity(userSpeaking ? 0.64 + 0.36 * blueBeat : 0.13),
+                                lineWidth:userSpeaking ? 3.8 + 3.2 * bluePower * blueBeat : 1.5)
+                        .shadow(color:.blue.opacity(bluePower * (0.55 + 0.45 * blueBeat)),
+                                radius:7 + 20 * bluePower * blueBeat)
+                        .padding(10)
+                        .scaleEffect(1 + bluePower * blueBeat * 0.012)
+                        .offset(y:reduceMotion ? 0 : bluePower * sin(time * 48) * 1.5)
+                }
+            }
         }
-        .onAppear { breathing = true }
-        .animation(.easeInOut(duration:0.45).repeatForever(autoreverses:true),
-                   value:breathing)
     }
 }

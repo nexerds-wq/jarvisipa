@@ -1,6 +1,10 @@
 name: Build Jarvis unsigned IPA
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 permissions:
   contents: read
 jobs:
@@ -14,11 +18,25 @@ jobs:
       - name: Generate Solos Jarvis project
         working-directory: SolosDirectiOS
         run: xcodegen generate --spec project.yml
+      - name: Check offline voice-command behavior
+        working-directory: SolosDirectiOS
+        run: |
+          set -euo pipefail
+          swiftc Sources/JarvisSystemCommands.swift Tests/JarvisSystemCommandSmoke.swift -o "$RUNNER_TEMP/jarvis-system-test"
+          "$RUNNER_TEMP/jarvis-system-test"
+          swiftc Sources/JarvisWakePhrase.swift Tests/JarvisWakePhraseSmoke.swift -o "$RUNNER_TEMP/jarvis-wake-test"
+          "$RUNNER_TEMP/jarvis-wake-test"
+          swiftc Sources/JarvisMusicCommands.swift Tests/MusicCommandSmoke.swift -o "$RUNNER_TEMP/jarvis-music-test"
+          "$RUNNER_TEMP/jarvis-music-test"
+          swiftc Sources/JarvisLiveClock.swift Tests/LiveClockSmoke.swift -o "$RUNNER_TEMP/jarvis-clock-test"
+          "$RUNNER_TEMP/jarvis-clock-test"
+          swiftc Sources/JarvisSongCatalog.swift Tests/JarvisSongCatalogSmoke.swift -o "$RUNNER_TEMP/jarvis-catalog-test"
+          "$RUNNER_TEMP/jarvis-catalog-test"
       - name: Compile without signing
         working-directory: SolosDirectiOS
         run: |
           set -euo pipefail
-          xcodebuild -project SolosDirect.xcodeproj -scheme SolosDirect -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/jarvis-build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CURRENT_PROJECT_VERSION=27 build
+          xcodebuild -project SolosDirect.xcodeproj -scheme SolosDirect -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/jarvis-build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CURRENT_PROJECT_VERSION=28 build
       - name: Package unsigned IPA
         run: |
           set -euo pipefail

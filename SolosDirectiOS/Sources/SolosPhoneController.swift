@@ -15,7 +15,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     var onHUDVoiceCommand: ((String) -> Bool)?
     @Published var voiceStatus = "Not listening"
     @Published private(set) var microphoneLevel: Double = 0
-    @Published private(set) var jarvisVoiceActive = false
+    @Published private(set) var userVoiceActive = false
     @Published var listening = false
     @Published var discoveredBLE = [String]()
     @Published var bleState = "Bluetooth scan not started"
@@ -55,6 +55,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var speechStartedAt = Date.distantPast
     private var questionSilenceWork: DispatchWorkItem?
     private var pendingVoiceQuestion = ""
+    private var awaitingFollowUp = false
+    private var followUpExpiresAt = Date.distantPast
     private var recognizerStartedAt = Date.distantPast
     private var audioObservers: [NSObjectProtocol] = []
     private var lockWatchdog: Timer?
@@ -72,7 +74,6 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                 // another utterance starts. Do not tear down the new answer.
                 guard !self.accessory.isSpeaking else { return }
                 self.awaitingSpeechCompletion = false
-                self.jarvisVoiceActive = false
                 guard self.continuousWakeWanted else { return }
                 self.voiceStatus = "Answer finished — restoring Hey Jarvis listening"
                 self.scheduleWakeRearm(after:0.6)
@@ -97,14 +98,17 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         audioObservers.append(center.addObserver(forName:AVAudioSession.routeChangeNotification,
             object:AVAudioSession.sharedInstance(),queue:.main) { [weak self] _ in
             guard let self else { return }
-            if self.continuousWakeWanted && !self.audioEngine.isRunning {
+            if self.continuousWakeWanted && self.listening &&
+               !self.awaitingSpeechCompletion && !self.accessory.isSpeaking &&
+               !self.audioEngine.isRunning {
                 self.voiceStatus = "Audio route changed; reconnecting microphone"
                 self.restartRecognitionSoon()
             }
         })
         audioObservers.append(center.addObserver(forName:Notification.Name.AVAudioEngineConfigurationChange,
             object:audioEngine,queue:.main) { [weak self] _ in
-            guard let self, self.continuousWakeWanted else { return }
+            guard let self, self.continuousWakeWanted, self.listening,
+                  !self.awaitingSpeechCompletion, !self.accessory.isSpeaking else { return }
             self.voiceStatus = "Audio engine configuration changed; restarting"
             self.restartRecognitionSoon()
         })
@@ -123,8 +127,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                 self.voiceStatus = "Microphone stopped; trying to restore listening"
                 self.restartRecognitionSoon()
             } else if !self.listening && !self.asking &&
-                        (!self.awaitingSpeechCompletion ||
-                         UserDefaults.standard.bool(forKey:"jarvisLockScreenWake")) {
+                        !self.awaitingSpeechCompletion && !self.accessory.isSpeaking {
                 self.resumeWakeIfNeeded()
             }
         }
@@ -315,8 +318,9 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             }
             if #available(iOS 26.0, *) {
                 guard SystemLanguageModel.default.isAvailable else {
-                    self.aiStatus = "Apple Intelligence on-device model is unavailable. Enable Apple Intelligence and download its model in Settings."
-                    self.aiAnswer = self.aiStatus
+                    self.deliverJarvisAnswer(
+                        "I heard you, but Apple Intelligence is not ready. Please enable it and download its model in iPhone Settings.",
+                        status:"Apple Intelligence unavailable — enable and download its model in Settings")
                     return
                 }
                 do {
@@ -366,9 +370,13 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                         ? "Answered from Wikipedia (ONLINE factual lookup)"
                         : "Answered locally with Apple Intelligence")
                 } catch {
-                    self.aiStatus = "On-device JARVIS error: \(error.localizedDescription)"
-                    self.aiAnswer = self.aiStatus
+                    self.deliverJarvisAnswer(
+                        "I heard your question, but I couldn't finish the answer. Please try again.",
+                        status:"On-device JARVIS error: \(error.localizedDescription)")
                 }
+            } else {
+                self.deliverJarvisAnswer("This version of Jarvis needs iOS 26 or newer for local AI.",
+                                         status:"On-device AI requires iOS 26")
             }
         }
     }
@@ -403,43 +411,28 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private func deliverJarvisAnswer(_ response: String, status: String) {
         aiAnswer = response
         aiStatus = status
-    if UserDefaults.standard.object(forKey: "jarvisSpeakAnswers") as? Bool ?? true {
-        // Full-duplex voice processing lets the mic stay open
-        // during speech. iOS voiceChat enables system acoustic echo
-        // cancellation where the selected audio route supports it.
-        let bargeIn = UserDefaults.standard.bool(forKey:"jarvisLockScreenWake")
-        if !bargeIn {
-            let shouldResume = self.continuousWakeWanted
-            self.stopListening()
-            self.continuousWakeWanted = shouldResume
+        if !(UserDefaults.standard.object(forKey:"jarvisSpeakAnswers") as? Bool ?? true) {
+            let shouldResume = continuousWakeWanted
+            stopListening()
+            continuousWakeWanted = shouldResume
+            voiceStatus = "Answer shown; spoken replies are disabled in Settings"
+            if shouldResume { scheduleWakeRearm(after:0.3) }
+            return
         }
-        do {
-            let audio = AVAudioSession.sharedInstance()
-            if bargeIn {
-                try audio.setCategory(.playAndRecord, mode:.default,
-                                      options:[.mixWithOthers,.allowBluetoothHFP,.defaultToSpeaker])
-            } else {
-                try audio.setCategory(.playback, mode:.spokenAudio,
-                                      options:[.mixWithOthers,.allowBluetoothA2DP])
-            }
-            try audio.setActive(true)
-            self.voiceStatus = bargeIn ? "Speaking and listening for Hey Jarvis" : "Speaking Jarvis answer"
-        } catch {
-            self.voiceStatus = "Audio route: \(error.localizedDescription)"
-        }
-        self.awaitingSpeechCompletion = true
-        self.jarvisVoiceActive = true
-        self.speechStartedAt = Date()
-        self.accessory.speak(response)
-        if bargeIn && self.continuousWakeWanted {
-            // The previous SFSpeechRecognizer task was stopped
-            // on submission. Start a fresh wake detector now,
-            // instead of relying on AVSpeechSynthesizer.didFinish.
-            // iOS voiceChat handles acoustic echo cancellation
-            // on supported audio routes.
-            self.scheduleWakeRearm(after:0.4)
-        }
+        speakExternalReply(response)
     }
+
+    // Shared audio handoff for built-in AI, Ollama replies, and the test
+    // button. A TTS utterance must not compete with an active mic capture.
+    func speakExternalReply(_ response: String, companion: Bool = false) {
+        let shouldResume = continuousWakeWanted
+        stopListening()
+        continuousWakeWanted = shouldResume
+        awaitingSpeechCompletion = true
+        speechStartedAt = Date()
+        voiceStatus = "Jarvis speaking — microphone paused"
+        if companion { accessory.speakCompanion(response,style:"JARVIS") }
+        else { accessory.speak(response) }
     }
 
     // iOS 26 Foundation Models can report an unhelpful NSError (-1).
@@ -546,9 +539,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         guard !musicPlaybackActive || UserDefaults.standard.bool(forKey:"jarvisListenWhileMusic") else {
             return
         }
-        guard continuousWakeWanted, !listening, !startingRecognition, !asking else { return }
-        guard !awaitingSpeechCompletion ||
-              UserDefaults.standard.bool(forKey:"jarvisLockScreenWake") else { return }
+        guard continuousWakeWanted, !listening, !startingRecognition, !asking,
+              !awaitingSpeechCompletion, !accessory.isSpeaking else { return }
         startListening()
     }
 
@@ -598,6 +590,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         // Guard asynchronous permission callbacks to prevent two overlapping
         // audio-engine taps or stale callbacks restarting after STOP.
         continuousWakeWanted = true
+        guard !awaitingSpeechCompletion, !accessory.isSpeaking else { return }
         guard !listening, !startingRecognition else { return }
         startingRecognition = true
         let expectedGeneration = recognitionGeneration
@@ -634,19 +627,26 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         guard !listening else { return }
         recognitionGeneration += 1
         let generation = recognitionGeneration
-        guard let speechRecognizer, speechRecognizer.isAvailable, speechRecognizer.supportsOnDeviceRecognition else {
-            voiceStatus = "This iPhone language pack does not support offline speech. Use typed questions."
+        guard let speechRecognizer, speechRecognizer.isAvailable else {
+            voiceStatus = "iOS speech recognition is unavailable. Check Speech Recognition in Settings."
             return
         }
+        let allowOnline = UserDefaults.standard.bool(forKey:"jarvisAllowOnlineSpeech")
+        guard speechRecognizer.supportsOnDeviceRecognition || allowOnline else {
+            voiceStatus = "Offline English recognition is unavailable. Enable online speech in Jarvis Settings or install an offline language pack."
+            return
+        }
+        if awaitingFollowUp && Date() >= followUpExpiresAt { awaitingFollowUp = false }
         heardWake = false
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         recognitionRequest?.shouldReportPartialResults = true
-        recognitionRequest?.requiresOnDeviceRecognition = true
+        recognitionRequest?.requiresOnDeviceRecognition = !allowOnline
         guard let request = recognitionRequest else { return }
         do {
             let audio = AVAudioSession.sharedInstance()
             try audio.setCategory(.playAndRecord, mode:.default,
                                        options:[.mixWithOthers,.allowBluetoothHFP,.defaultToSpeaker])
+            try audio.setActive(true, options:.notifyOthersOnDeactivation)
             // Works with any paired HFP headset, even without Solos HUD.
             // iOS selects the playback route; it does not offer independent
             // output devices for music and Jarvis inside one audio session.
@@ -664,13 +664,17 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             } else {
                 selected = inputs.first(where:{$0.portType == .bluetoothHFP})
             }
-            guard let selected else {
+            // Bluetooth is preferred, not mandatory. On an unpaired iPhone,
+            // silently refusing to listen made "Hey Jarvis" appear broken.
+            let chosen = selected ?? (preference == "solos" ? nil : inputs.first(where:{
+                $0.portType == .builtInMic
+            }))
+            guard let chosen else {
                 voiceStatus = "Selected microphone unavailable. Pair a Bluetooth headset with microphone or select iPhone mic."
                 startingRecognition = false
                 return
             }
-            try audio.setPreferredInput(selected)
-            try audio.setActive(true, options: .notifyOthersOnDeactivation)
+            try audio.setPreferredInput(chosen)
             let node = audioEngine.inputNode
             let format = node.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else {
@@ -712,6 +716,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     DispatchQueue.main.async { [weak self] in
                         guard let self, self.listening else { return }
                         self.microphoneLevel = self.microphoneLevel * 0.45 + level * 0.55
+                        self.userVoiceActive = self.microphoneLevel >= 0.13
                     }
                 }
             }
@@ -720,7 +725,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             try audioEngine.start()
             listening = true
             recognizerStartedAt = Date()
-            voiceStatus = "Listening for Hey Jarvis • " + selected.portName
+            voiceStatus = (awaitingFollowUp ? "Listening for your question • " :
+                           "Listening for Hey Jarvis • ") + chosen.portName
             // Rotate only the speech recognizer, keeping the microphone stream
             // running and the audio route stable for Apple Music.
             scheduleWakeTaskRotation(generation:generation)
@@ -750,7 +756,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         recognitionRequest?.endAudio()
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         recognitionRequest?.shouldReportPartialResults = true
-        recognitionRequest?.requiresOnDeviceRecognition = true
+        recognitionRequest?.requiresOnDeviceRecognition = !UserDefaults.standard.bool(forKey:"jarvisAllowOnlineSpeech")
         let newRequest = recognitionRequest
         recognitionRequestLock.unlock()
         guard let newRequest else { return }
@@ -768,7 +774,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     if let result {
                         let heard = result.bestTranscription.formattedString
                         self.transcribed = heard
-                        if let range = heard.range(of:"hey jarvis",options:.caseInsensitive) {
+                        if let words = JarvisWakePhrase.question(afterWakeIn:heard) {
                             if !self.heardWake {
                                 self.heardWake = true
                                 self.pendingVoiceQuestion = ""
@@ -777,12 +783,11 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                                     self.awaitingSpeechCompletion = false
                                 }
                             }
-                            let words = String(heard[range.upperBound...]).trimmingCharacters(in:.whitespacesAndNewlines)
                             if !words.isEmpty {
                                 self.pendingVoiceQuestion = words
                                 self.scheduleQuestionAfterSilence(generation:generation)
                             } else {
-                                self.voiceStatus = "Wake phrase heard — say your full question"
+                                self.scheduleWakeAcknowledgement(generation:generation)
                             }
                         } else if self.heardWake {
                             // Some partial results omit the wake phrase after recognition
@@ -792,10 +797,21 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                                 self.pendingVoiceQuestion = words
                                 self.scheduleQuestionAfterSilence(generation:generation)
                             }
+                        } else if self.awaitingFollowUp && Date() < self.followUpExpiresAt {
+                            // After Jarvis says "I'm listening", the next phrase
+                            // is a question; the person needn't repeat the wake word.
+                            let words = heard.trimmingCharacters(in:.whitespacesAndNewlines)
+                            if !words.isEmpty {
+                                self.heardWake = true
+                                self.pendingVoiceQuestion = words
+                                self.scheduleQuestionAfterSilence(generation:generation)
+                            }
                         }
                         if result.isFinal && self.listening {
                             if self.heardWake && !self.pendingVoiceQuestion.isEmpty {
                                 self.submitPendingVoiceQuestion(generation:generation)
+                            } else if self.heardWake {
+                                self.acknowledgeWake(generation:generation)
                             } else {
                                 self.rotateWakeRecognitionTask()
                             }
@@ -808,6 +824,45 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                 }
             }
 
+    }
+
+    private func scheduleWakeAcknowledgement(generation:Int) {
+        questionSilenceWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.acknowledgeWake(generation:generation)
+        }
+        questionSilenceWork = work
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.85,execute:work)
+        voiceStatus = "Hey Jarvis heard — waiting for your question"
+    }
+
+    private func acknowledgeWake(generation:Int) {
+        guard recognitionGeneration == generation, heardWake,
+              pendingVoiceQuestion.isEmpty else { return }
+        questionSilenceWork?.cancel()
+        questionSilenceWork = nil
+        let shouldResume = continuousWakeWanted
+        stopListening()
+        continuousWakeWanted = shouldResume
+        guard shouldResume else { return }
+        awaitingFollowUp = true
+        followUpExpiresAt = Date().addingTimeInterval(12)
+        let expiry = followUpExpiresAt
+        DispatchQueue.main.asyncAfter(deadline:.now()+12) { [weak self] in
+            guard let self, self.awaitingFollowUp,
+                  self.followUpExpiresAt == expiry else { return }
+            self.awaitingFollowUp = false
+            if self.listening { self.voiceStatus = "Listening for Hey Jarvis" }
+        }
+        if UserDefaults.standard.object(forKey:"jarvisSpeakAnswers") as? Bool ?? true {
+            awaitingSpeechCompletion = true
+            speechStartedAt = Date()
+            voiceStatus = "Jarvis answering wake phrase — microphone paused"
+            accessory.speak("Yes, I'm listening.")
+        } else {
+            voiceStatus = "Wake detected — listening for your question"
+            scheduleWakeRearm(after:0.2)
+        }
     }
 
     // Do not decide a question is complete by character count. Every new
@@ -826,11 +881,13 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
 
     private func submitPendingVoiceQuestion(generation:Int) {
         guard recognitionGeneration == generation else { return }
-        let question = pendingVoiceQuestion.trimmingCharacters(in:.whitespacesAndNewlines)
+        let question = pendingVoiceQuestion.trimmingCharacters(
+            in:.whitespacesAndNewlines.union(.punctuationCharacters))
         guard !question.isEmpty else { return }
         questionSilenceWork?.cancel()
         questionSilenceWork = nil
         pendingVoiceQuestion = ""
+        awaitingFollowUp = false
         let rearm = continuousWakeWanted
         stopListening()
         continuousWakeWanted = rearm
@@ -846,6 +903,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     }
 
     private func restartRecognitionSoon() {
+        guard !awaitingSpeechCompletion, !accessory.isSpeaking, !asking else { return }
         // Audio route + engine notifications can arrive in a burst. Coalesce
         // them so restarts cannot cancel each other indefinitely.
         guard !restartScheduled else { return }
@@ -873,6 +931,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         questionSilenceWork?.cancel()
         questionSilenceWork = nil
         pendingVoiceQuestion = ""
+        awaitingFollowUp = false
+        followUpExpiresAt = .distantPast
         recognitionGeneration += 1
         if audioEngine.isRunning { audioEngine.stop() }
         if wakeAudioTapInstalled {
@@ -887,6 +947,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         speechTask = nil
         listening = false
         microphoneLevel = 0
+        userVoiceActive = false
         voiceStatus = "Not listening"
     }
 }
