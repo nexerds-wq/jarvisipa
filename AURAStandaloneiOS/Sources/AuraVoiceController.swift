@@ -74,7 +74,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var spokenCharacters = 0
     private var hasMicrophoneTap = false
     private var restartTask: Task<Void, Never>?
-    private var lastProcessedSpeech = ""
+    private var silenceTask: Task<Void, Never>?
+    private var recognitionCycle: UInt64 = 0
+    private var lastSpeechUpdate = Date.distantPast
     private let musicPlayer = MPMusicPlayerController.systemMusicPlayer
 
     var availableVoices: [String] { ["Automatic"] + AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }.map { $0.identifier }.sorted() }
@@ -140,8 +142,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
         do {
             let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playAndRecord, mode: .measurement,
-                                  options: [.defaultToSpeaker, .allowBluetooth])
+            try audio.setCategory(.playAndRecord, mode: .default,
+                                  options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
             try audio.setActive(true, options: .notifyOthersOnDeactivation)
 
             let request = SFSpeechAudioBufferRecognitionRequest()
@@ -154,7 +156,12 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
                 Task { @MainActor [weak self] in
                     guard let self, self.isListening else { return }
                     if let result {
-                        self.heardText = result.bestTranscription.formattedString
+                        let incoming = result.bestTranscription.formattedString
+                        if incoming != self.heardText {
+                            self.heardText = incoming
+                            self.lastSpeechUpdate = Date()
+                            if self.handsFree { self.scheduleSilenceFinish(cycle: cycle) }
+                        }
                         if self.handsFree && result.isFinal { self.finishListeningAndRespond() }
                     }
                     if let error {
@@ -177,6 +184,13 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             audioEngine.prepare()
             try audioEngine.start()
             isListening = true
+            if handsFree {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(48))
+                    guard let self, self.isListening, self.recognitionCycle == cycle else { return }
+                    self.finishListeningAndRespond()
+                }
+            }
         } catch {
             stopMicrophone()
             status = "Couldn't start the mic: \(error.localizedDescription)"
@@ -198,7 +212,22 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         }
     }
 
+    private func scheduleSilenceFinish(cycle: UInt64) {
+        silenceTask?.cancel()
+        silenceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled, let self, self.isListening, self.recognitionCycle == cycle else { return }
+            let phrase = self.heardText.lowercased()
+            if phrase.contains("hey aura") || phrase.contains("hey jarvis") {
+                self.finishListeningAndRespond()
+            }
+        }
+    }
+
     private func stopMicrophone() {
+        silenceTask?.cancel()
+        silenceTask = nil
+        recognitionCycle &+= 1
         if audioEngine.isRunning { audioEngine.stop() }
         if hasMicrophoneTap {
             audioEngine.inputNode.removeTap(onBus: 0)
@@ -278,7 +307,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
         do {
             let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try audio.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .duckOthers])
             try audio.setActive(true)
         } catch {
             status = "Audio output issue: \(error.localizedDescription)"
