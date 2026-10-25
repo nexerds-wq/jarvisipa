@@ -8,7 +8,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.example.auralocalvoice",
+      "bundleIdentifier": "com.nexer.solosjarvisbg",
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "AURA sends audio to your computer's free local voice models.",
         "NSMicrophoneUsageDescription": "AURA needs the microphone for live two-way voice conversations.",
@@ -29,4 +29,3 @@
     ]
   }
 }
-
