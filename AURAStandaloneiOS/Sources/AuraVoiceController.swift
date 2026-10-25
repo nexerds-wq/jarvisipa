@@ -91,7 +91,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         didSet { UserDefaults.standard.set(localNewsChimes, forKey: "AuraNewsChimes"); configureNearbyAlerts() }
     }
     @Published private(set) var localAlertStatus = "Optional local alerts are off."
-    @Published var handsFree = false
+    @Published private(set) var handsFree = false
     @Published private(set) var followUpReady = false
     @Published var selectedVoice = UserDefaults.standard.string(forKey: "AuraPreferredVoice") ?? "Automatic" {
         didSet { UserDefaults.standard.set(selectedVoice, forKey: "AuraPreferredVoice") }
@@ -107,6 +107,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     private var generationTask: Task<Void, Never>?
     private var hasMicrophoneTap = false
     private var microphoneAuthorized = false
+    private var permissionRequestInFlight = false
     private var consecutiveMicFailures = 0
     private var spokenPrefixCount = 0
     private var startedSpeakingReply = false
@@ -162,6 +163,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance())
         NotificationCenter.default.addObserver(self, selector: #selector(audioRouteChanged(_:)),
             name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance())
+        NotificationCenter.default.addObserver(self, selector: #selector(appBecameActive),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
         checkAvailability()
     }
 
@@ -169,7 +172,8 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         switch SystemLanguageModel.default.availability {
         case .available:
             modelReady = true
-            if !isListening && !isGenerating { status = handsFree ? "Ready for Hey Jarvis." : "Ready. Say Hey Jarvis or tap the microphone." }
+            if !isListening && !isGenerating { status = "Ready. Say Hey Jarvis." }
+            if handsFree && !isListening { scheduleRestart() }
         case .unavailable:
             modelReady = false
             status = "Apple Intelligence isn't ready. Update to iOS 26+, enable Apple Intelligence in Settings, allow its download, then tap Check."
@@ -179,23 +183,17 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         }
     }
 
-    func microphoneTapped() {
-        if isListening {
-            // A manual tap sends the current transcript even without the wake word.
-            finishListeningAndRespond(manual: true)
-        } else {
-            authorizeMicrophone()
-        }
-    }
-
     private func authorizeMicrophone() {
-        guard modelReady, !isGenerating else { return }
-        guard queuedSpeechCount == 0, !synthesizer.isSpeaking else { return }
+        guard handsFree, modelReady, !isGenerating else { return }
+        guard queuedSpeechCount == 0, !synthesizer.isSpeaking, !isListening else { return }
         if microphoneAuthorized { startListening(); return }
+        guard !permissionRequestInFlight else { return }
+        permissionRequestInFlight = true
         SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
             AVAudioSession.sharedInstance().requestRecordPermission { granted in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    self.permissionRequestInFlight = false
                     guard authorization == .authorized, granted else {
                         self.status = "Allow Microphone and Speech Recognition in iPhone Settings for JARVIS AURA."
                         return
@@ -331,9 +329,9 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         if handsFree { scheduleRestart() }
     }
 
-    private func finishListeningAndRespond(manual: Bool = false) {
+    private func finishListeningAndRespond() {
         let text = heardText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let accepted = manual || shouldAccept(text)
+        let accepted = shouldAccept(text)
         stopRecognition()
         if text.isEmpty || !accepted {
             status = "Listening for Hey Jarvis..."
@@ -556,28 +554,27 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     }
 
     func interrupt() {
+        // Stop the answer, never disable automatic wake listening.
         generationTask?.cancel()
         generationTask = nil
         restartTask?.cancel()
-        handsFree = false
-        stopMicrophone()
+        stopRecognition()
         synthesizer.stopSpeaking(at: .immediate)
         queuedSpeechCount = 0
         followUpExpiryTask?.cancel()
         followUpReady = false
-        stopAudioInput()
         isGenerating = false
-        status = "Stopped. Tap the microphone whenever you're ready."
+        status = "Reply stopped. Listening for Hey Jarvis..."
+        scheduleRestart()
     }
 
     func newConversation() {
-        let wasHandsFree = handsFree
         interrupt()
         session = nil
         heardText = ""
         reply = ""
         checkAvailability()
-        if wasHandsFree { setHandsFree(true) }
+        scheduleRestart()
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
@@ -597,8 +594,18 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
     func activateAlwaysReady() {
         guard !didActivateAutomatically else { return }
         didActivateAutomatically = true
-        setHandsFree(true)
+        handsFree = true
+        authorizeMicrophone()
         configureNearbyAlerts()
+    }
+
+    @objc private func appBecameActive() {
+        // A screen revisit must re-arm listening if iOS interrupted audio.
+        if !didActivateAutomatically {
+            activateAlwaysReady()
+        } else if handsFree && !isListening && !isGenerating {
+            scheduleRestart()
+        }
     }
 
     private func configureNearbyAlerts() {
@@ -631,20 +638,6 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         pendingNearbyChime = nil
         announceNearbyChime(message)
         return true
-    }
-
-    func setHandsFree(_ enabled: Bool) {
-        handsFree = enabled
-        restartTask?.cancel()
-        if enabled {
-            consecutiveMicFailures = 0
-            authorizeMicrophone()
-        } else {
-            followUpExpiryTask?.cancel()
-            followUpReady = false
-            stopRecognition()
-            stopAudioInput()
-        }
     }
 
     private func scheduleRestart() {
