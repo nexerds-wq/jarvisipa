@@ -256,6 +256,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
             request.shouldReportPartialResults = true
             request.requiresOnDeviceRecognition = true
             request.taskHint = .dictation
+            request.contextualStrings = ["Hey Jarvis", "Hey Aura", "Jarvis", "AURA"]
             recognitionRequest = request
             audioBridge.setRequest(request)
             isListening = true
@@ -319,9 +320,10 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
 
     private func shouldAccept(_ text: String) -> Bool {
         if !handsFree { return true }
-        let words = text.lowercased()
-        return followUpReady ||
-            words.contains("hey jarvis") || words.contains("hey aura")
+        let words = text.lowercased().replacingOccurrences(
+            of: "[^a-z0-9]+", with: " ", options: .regularExpression
+        )
+        return followUpReady || words.contains("hey jarvis") || words.contains("hey aura")
     }
 
     private func startNewRecognitionCycle() {
@@ -341,7 +343,7 @@ final class AuraVoiceController: NSObject, ObservableObject, AVSpeechSynthesizer
         followUpExpiryTask?.cancel()
         followUpReady = false
         let cleaned = text.replacingOccurrences(
-            of: "(?i)hey (aura|jarvis)[, ]*", with: "", options: .regularExpression
+            of: "(?i)hey[, ]+(aura|jarvis)[, ]*", with: "", options: .regularExpression
         ).trimmingCharacters(in: .whitespacesAndNewlines)
         send(cleaned.isEmpty ? "Hello" : cleaned)
     }
