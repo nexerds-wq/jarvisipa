@@ -80,12 +80,14 @@ struct JarvisAlarmMetadata: AlarmMetadata {}
             }
             typealias Configuration = AlarmManager.AlarmConfiguration<JarvisAlarmMetadata>
             let stop = AlarmButton(text:"Dismiss",textColor:.white,systemImageName:"stop.circle")
+            let displayTitle = title.isEmpty ? "Jarvis Alarm" : String(title.prefix(80))
+            let localizedTitle: LocalizedStringResource = "\(displayTitle)"
             let alert = AlarmPresentation.Alert(
-                title:title.isEmpty ? "Jarvis Alarm" : String(title.prefix(80)),stopButton:stop)
+                title:localizedTitle,stopButton:stop)
             let attributes = AlarmAttributes<JarvisAlarmMetadata>(
                 presentation:AlarmPresentation(alert:alert),metadata:nil,tintColor:.orange)
-            let config = Configuration(schedule:.fixed(date),attributes:attributes)
-            try await AlarmManager.shared.schedule(id:UUID(),configuration:config)
+            let config: Configuration = Configuration(schedule:.fixed(date),attributes:attributes)
+            let _: Alarm = try await AlarmManager.shared.schedule(id:UUID(),configuration:config)
             status = "iOS system alarm scheduled for \(date.formatted(date:.abbreviated,time:.shortened))"
         } catch {
             status = "Alarm not scheduled: \(error.localizedDescription)"
