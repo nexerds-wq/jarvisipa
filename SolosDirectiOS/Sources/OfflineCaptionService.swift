@@ -97,7 +97,7 @@ final class OfflineCaptionService: NSObject, ObservableObject {
 
     /// Setting allowOnlineRecognition true allows Speech to use Apple's network
     /// recognition when on-device recognition is not supported for the language.
-    func start(locale:String, name:String, allowOnlineRecognition:Bool = false, preferPhoneMicrophone:Bool = false) {
+    func start(locale:String, name:String, allowOnlineRecognition:Bool = false, preferPhoneMicrophone:Bool = true) {
         stop()
         audioBuffers = 0
         microphoneLevel = 0
@@ -173,8 +173,9 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         captureRequest.shouldReportPartialResults = true
         captureRequest.requiresOnDeviceRecognition = forceOffline
         captureRequest.taskHint = .dictation
-        captureRequest.addsPunctuation = true
-        captureRequest.contextualStrings = ["Hey Jarvis", "Hola", "Oye Jarvis", "navegación", "traducción"]
+        // Avoid continuously rewriting punctuation in live conversation.
+        captureRequest.addsPunctuation = false
+        captureRequest.contextualStrings = ["Hey Jarvis", "Solos", "Oye Jarvis"]
         request = captureRequest
         activeSpeechRecognizer = speech
 
@@ -191,7 +192,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                                       options:[.mixWithOthers,.allowBluetoothA2DP,.defaultToSpeaker])
             } else {
                 try audio.setCategory(.playAndRecord,mode:.default,
-                                      options:[.mixWithOthers,.allowBluetoothHFP,.defaultToSpeaker])
+                                      options:[.mixWithOthers,.allowBluetoothHFP,
+                                               .bluetoothHighQualityRecording,.defaultToSpeaker])
             }
             try audio.setActive(true,options:.notifyOthersOnDeactivation)
             let inputs = audio.availableInputs ?? []
@@ -204,7 +206,9 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                 })
             // The caption/conversation screen must work with an iPhone alone,
             // any HFP headset, or Solos. Never require proprietary HUD audio.
-            guard let selected = preferPhoneMicrophone ? builtIn : (solos ?? headset ?? builtIn) else {
+            let activeHeadset = audio.currentRoute.inputs.first(where:{$0.portType != .builtInMic})
+            guard let selected = preferPhoneMicrophone ? builtIn :
+                (activeHeadset ?? solos ?? headset ?? builtIn) else {
                 desired = false
                 starting = false
                 status = "No usable microphone. Check iPhone microphone permission and audio input."
@@ -212,9 +216,10 @@ final class OfflineCaptionService: NSObject, ObservableObject {
                 return
             }
             try audio.setPreferredInput(selected)
-            microphoneRoute = selected.portName
             let input = engine.inputNode
             let format = input.outputFormat(forBus:0)
+            microphoneRoute = selected.portName +
+                String(format:" • %.0f kHz",format.sampleRate / 1000)
             guard format.sampleRate > 0, format.channelCount > 0 else {
                 starting = false
                 cleanup()
@@ -299,8 +304,8 @@ final class OfflineCaptionService: NSObject, ObservableObject {
         next.shouldReportPartialResults = true
         next.requiresOnDeviceRecognition = onDeviceOnly && speech.supportsOnDeviceRecognition
         next.taskHint = .dictation
-        next.addsPunctuation = true
-        next.contextualStrings = ["Hey Jarvis","Hola","Oye Jarvis","navegación","traducción"]
+        next.addsPunctuation = false
+        next.contextualStrings = ["Hey Jarvis","Solos","Oye Jarvis"]
         requestLock.lock()
         request?.endAudio()
         request = next

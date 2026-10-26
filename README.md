@@ -21,6 +21,16 @@ The original Solos LCD/OLED display uses a proprietary Bluetooth Classic RFCOMM 
 
 The existing `JarvisGlasses/` folder remains in this repository as an older separate M02S app; the current IPA workflow builds `SolosDirectiOS/` instead.
 
+## Clearer, continuous voice capture (V29)
+
+- The preferred microphone on a fresh installation is the **iPhone mic**, which avoids forcing audio through the lower-quality Bluetooth hands-free call route. An existing saved mic choice is respected. Choose **Advanced → Jarvis microphone → iPhone** if an older installation is still using the headset mic. Keep the phone close enough to hear you clearly.
+- **Bluetooth headset** remains available for hands-free use. On iOS 26, Jarvis enables Apple's high-quality Bluetooth recording option for compatible AirPods; unsupported headsets fall back to their normal recording route. The microphone name and actual audio format sample rate appear in the listening status.
+- Jarvis waits for a more natural pause before submitting a question. It also watches microphone activity so a short thinking pause doesn't cut your sentence in half, and it keeps collecting words across speech recognizer session rotations instead of discarding your question.
+- Live speech requests use dictation mode without automatic punctuation insertion. The system speech recognizer can still revise uncertain words; an app cannot guarantee perfect transcription or disable every language-model correction.
+- The captions/conversation screen also defaults to the iPhone microphone for nearby speech. Its existing switch can select a headset when you need hands-free capture.
+
+**Quick test:** With the app open, look at its microphone name, sample rate and blue speaking outline. Say "Hey Jarvis, I need to ask something, and I'm going to pause, because I don't want you to cut me off, what time is it?" If it still misses words, try the iPhone mic up close, then the Bluetooth headset mode, and compare the "Last heard" transcript. Online speech recognition remains opt-in because it may send audio to Apple; it is not enabled by this update.
+
 ## Voice reply and reactive outlines (V28)
 
 - A **blue inner outline** vibrates with actual iPhone/headset microphone energy when you are talking, including in captions/conversation mode. An independent **orange outer outline** pulses while the iOS speech synthesizer is actually speaking. Both remain faint while idle. Reduce Motion keeps the outlines static.
