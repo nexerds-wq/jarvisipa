@@ -58,6 +58,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
     private var completedQuestionPrefix = ""
     private var lastQuestionTextAt = Date.distantPast
     private var lastQuestionVoiceAt = Date.distantPast
+    private var lastWakeVoiceAt = Date.distantPast
+    private var wakeHeardAt = Date.distantPast
     private var awaitingFollowUp = false
     private var followUpExpiresAt = Date.distantPast
     private var recognizerStartedAt = Date.distantPast
@@ -337,7 +339,18 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                     let prompt = cleaned.isEmpty ? trimmed : cleaned
                     var response: String = ""
                     var answeredOnline = false
-                    let systemInstructions = "Answer clearly in one or two short sentences. " +
+                    let expressive = UserDefaults.standard.object(forKey:"jarvisExpressiveSpeech") as? Bool ?? true
+                    let personality = expressive ?
+                        "You are JARVIS: a capable, natural conversational assistant. " +
+                        "Sound warm and human in your wording without claiming to be a person. " +
+                        "Use gentle humor only if the user is joking or the moment is light. " +
+                        "If the user shares worry, loss, frustration, or stress, listen and respond with specific, respectful support. " +
+                        "If the user mentions immediate danger, respond clearly and urgently, with concrete safety steps. " +
+                        "Vary sentence length and natural punctuation for spoken rhythm. " +
+                        "Don't use robotic scripts, forced jokes, fake certainty, or pretend to detect emotions from audio. " :
+                        "Answer clearly, respectfully, and directly. "
+                    let systemInstructions = personality +
+                        "Keep typical answers to one to three short sentences. " +
                         JarvisLiveClock.modelTimeContext()
                     do {
                         // Stream partial tokens immediately; skip the second
@@ -644,6 +657,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         completedQuestionPrefix = ""
         lastQuestionTextAt = .distantPast
         lastQuestionVoiceAt = .distantPast
+        lastWakeVoiceAt = .distantPast
+        wakeHeardAt = .distantPast
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         recognitionRequest?.shouldReportPartialResults = true
         recognitionRequest?.requiresOnDeviceRecognition = !allowOnline
@@ -737,6 +752,9 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                         guard let self, self.listening else { return }
                         self.microphoneLevel = self.microphoneLevel * 0.45 + level * 0.55
                         self.userVoiceActive = self.microphoneLevel >= 0.13
+                        if self.heardWake && level >= 0.22 {
+                            self.lastWakeVoiceAt = Date()
+                        }
                         if self.heardWake && !self.pendingVoiceQuestion.isEmpty && level >= 0.22 {
                             self.lastQuestionVoiceAt = Date()
                         }
@@ -815,6 +833,7 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                         if let words = JarvisWakePhrase.question(afterWakeIn:heard) {
                             if !self.heardWake {
                                 self.heardWake = true
+                                self.wakeHeardAt = Date()
                                 self.pendingVoiceQuestion = ""
                                 self.completedQuestionPrefix = ""
                                 if self.accessory.isSpeaking {
@@ -853,7 +872,9 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
                                 // chunk, without closing the microphone.
                                 self.rotateWakeRecognitionTask()
                             } else if self.heardWake {
-                                self.acknowledgeWake(generation:generation)
+                                // Keep the recognizer alive through the rest
+                                // of a wake-only pause before acknowledging.
+                                self.rotateWakeRecognitionTask()
                             } else {
                                 self.rotateWakeRecognitionTask()
                             }
@@ -878,6 +899,12 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         guard pendingVoiceQuestion != whole else { return }
         pendingVoiceQuestion = whole
         lastQuestionTextAt = Date()
+        if let finished = JarvisSpeechEndpoint.explicitFinishedQuestion(whole),
+           (UserDefaults.standard.object(forKey:"jarvisPatientTurnTaking") as? Bool ?? true) {
+            pendingVoiceQuestion = finished
+            submitPendingVoiceQuestion(generation:generation)
+            return
+        }
         scheduleQuestionAfterSilence(generation:generation)
     }
 
@@ -887,13 +914,20 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             self?.acknowledgeWake(generation:generation)
         }
         questionSilenceWork = work
-        DispatchQueue.main.asyncAfter(deadline:.now()+1.05,execute:work)
-        voiceStatus = "Hey Jarvis heard — waiting for your question"
+        let patient = UserDefaults.standard.object(forKey:"jarvisPatientTurnTaking") as? Bool ?? true
+        DispatchQueue.main.asyncAfter(deadline:.now()+(patient ? 1.85 : 1.05),execute:work)
+        voiceStatus = "Hey Jarvis heard — waiting until you finish speaking"
     }
 
     private func acknowledgeWake(generation:Int) {
         guard recognitionGeneration == generation, heardWake,
               pendingVoiceQuestion.isEmpty else { return }
+        let patient = UserDefaults.standard.object(forKey:"jarvisPatientTurnTaking") as? Bool ?? true
+        if patient && Date().timeIntervalSince(wakeHeardAt) < 5.5 &&
+           Date().timeIntervalSince(lastWakeVoiceAt) < 1.15 {
+            scheduleWakeAcknowledgement(generation:generation)
+            return
+        }
         questionSilenceWork?.cancel()
         questionSilenceWork = nil
         openFollowUpConversation(forceListening:false)
@@ -939,7 +973,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
             guard let self, self.recognitionGeneration == generation else { return }
             let remaining = JarvisSpeechEndpoint.remainingWait(
                 now:Date(),lastTranscript:self.lastQuestionTextAt,
-                lastVoice:self.lastQuestionVoiceAt)
+                lastVoice:self.lastQuestionVoiceAt,
+                patient:UserDefaults.standard.object(forKey:"jarvisPatientTurnTaking") as? Bool ?? true)
             if remaining > 0 {
                 self.scheduleQuestionAfterSilence(generation:generation)
             } else {
@@ -948,7 +983,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         }
         questionSilenceWork = work
         let wait = max(0.08,JarvisSpeechEndpoint.remainingWait(
-            now:Date(),lastTranscript:lastQuestionTextAt,lastVoice:lastQuestionVoiceAt))
+            now:Date(),lastTranscript:lastQuestionTextAt,lastVoice:lastQuestionVoiceAt,
+            patient:UserDefaults.standard.object(forKey:"jarvisPatientTurnTaking") as? Bool ?? true))
         DispatchQueue.main.asyncAfter(deadline:.now()+wait,execute:work)
         voiceStatus = "Listening to your full question — take your time"
     }
@@ -964,6 +1000,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         completedQuestionPrefix = ""
         lastQuestionTextAt = .distantPast
         lastQuestionVoiceAt = .distantPast
+        lastWakeVoiceAt = .distantPast
+        wakeHeardAt = .distantPast
         awaitingFollowUp = false
         let rearm = continuousWakeWanted
         stopListening()
@@ -1011,6 +1049,8 @@ final class SolosPhoneController: NSObject, ObservableObject, CLLocationManagerD
         completedQuestionPrefix = ""
         lastQuestionTextAt = .distantPast
         lastQuestionVoiceAt = .distantPast
+        lastWakeVoiceAt = .distantPast
+        wakeHeardAt = .distantPast
         awaitingFollowUp = false
         followUpExpiresAt = .distantPast
         recognitionGeneration += 1

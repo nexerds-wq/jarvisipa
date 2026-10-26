@@ -16,6 +16,8 @@
 <key>NSMicrophoneUsageDescription</key><string>Listen for Hey Jarvis and questions on your iPhone.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Recognize Hey Jarvis and spoken questions with on-device speech processing.</string>
 <key>NSLocationWhenInUseUsageDescription</key><string>Track your route while you navigate, including when the iPhone screen is locked, so the glasses can show updates and speak turns.</string>
+<key>NSRemindersFullAccessUsageDescription</key><string>Save reminders you request to your Apple Reminders lists.</string>
+<key>NSAlarmKitUsageDescription</key><string>Schedule system alarms you create in Jarvis so they alert you at the requested time.</string>
 <key>NSContactsUsageDescription</key><string>Show the contact name and profile photo on your Solos message HUD when you choose to share a message.</string>
 <key>CFBundleURLTypes</key><array><dict>
 <key>CFBundleURLName</key><string>com.nexer.solosjarvisbg.message</string>
