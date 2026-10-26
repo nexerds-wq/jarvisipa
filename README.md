@@ -21,6 +21,14 @@ The original Solos LCD/OLED display uses a proprietary Bluetooth Classic RFCOMM 
 
 The existing `JarvisGlasses/` folder remains in this repository as an older separate M02S app; the current IPA workflow builds `SolosDirectiOS/` instead.
 
+## Startup stability investigation (V32)
+
+- V31 was reported to show a white screen and crash on a physical iPhone even though the unsigned app compiled. The exact device crash log is not yet available, so this is a precautionary startup fix, not a confirmed root-cause diagnosis.
+- V32 draws a minimal branded launch screen first, then loads the full command center. Microphone capture, accessory refresh, weather/location, health and HUD rendering begin in short delayed stages after the first visible frame. This reduces simultaneous startup work and overlapping permission requests.
+- Decorative Canvas drawing now rejects non-finite layout sizes, and the animated core uses bounded rotation angles. These changes protect against pathological layout inputs without changing the glasses HUD rendering.
+- The separate simulator launch workflow tests whether an iOS Simulator can boot, install, launch and keep Jarvis alive. Its boot and app-launch steps have timeouts to avoid hanging indefinitely on GitHub-hosted macOS runners.
+- If V32 still crashes on your device, send the most recent **Settings → Privacy & Security → Analytics & Improvements → Analytics Data → SolosDirect** `.ips` crash file (or an Xcode Device Logs report). The exception and thread stack will allow us to identify which startup component is failing.
+
 ## JARVIS Command Center redesign + human-paced conversation (V31)
 
 - New iPhone interface: midnight-blue atmospheric background, animated reactive central core, glass-style control panels, bright cyan controls, direct mic/voice actions, live conversation bubbles, redesigned glasses preview, connection diagnosis cards, and the full seven-module HUD switcher. The actual glasses output stays the same proven 428×240 high-contrast bitmap format.
