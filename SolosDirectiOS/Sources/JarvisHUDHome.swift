@@ -113,6 +113,9 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
     @AppStorage("jarvisMicrophoneSource") private var microphoneSource = "iphone"
     @AppStorage("jarvisSpeakAnswers") private var speakReplies = true
+    @AppStorage("jarvisVoiceIdentifier") private var jarvisVoiceIdentifier = "automatic"
+    @AppStorage("jarvisVoiceStyle") private var jarvisVoiceStyle = "natural"
+    @AppStorage("jarvisVoiceRate") private var jarvisVoiceRate = 0.50
     @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = true
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let names = ["DASHBOARD","NAVIGATION","CAPTIONS","TRANSLATE","MESSAGES","JARVIS","TIMERS"]
@@ -1074,6 +1077,7 @@ struct JarvisHUDHome: View {
             SecureField("Ollama Cloud API key (optional)",text:$ollamaKey).textFieldStyle(.roundedBorder)
             SecureField("Serper Google Search API key (optional)",text:$serperKey).textFieldStyle(.roundedBorder)
             Toggle("Speak Jarvis answers",isOn:$speakReplies)
+            voiceSettings
             Toggle("Listen for Hey Jarvis when possible",isOn:$keepJarvisListening)
             Toggle("Keep Jarvis microphone active during music (may disrupt playback)",
                    isOn:$listenWhileMusic)
@@ -1102,6 +1106,41 @@ struct JarvisHUDHome: View {
             Text("Ollama must run on your computer or reachable server. A local Wi-Fi model works without outside internet, but iPhone-only offline answers use Apple's supported on-device model.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private var voiceSettings: some View {
+        VStack(alignment:.leading,spacing:9) {
+            Label("NATURAL JARVIS VOICE • FREE",systemImage:"waveform")
+                .font(.caption.bold()).foregroundStyle(.orange)
+            Picker("Voice",selection:$jarvisVoiceIdentifier) {
+                Text("Automatic • best installed voice").tag("automatic")
+                ForEach(accessory.englishVoiceOptions) { option in
+                    Text(option.label).tag(option.id)
+                }
+            }.pickerStyle(.menu)
+            Picker("Speaking style",selection:$jarvisVoiceStyle) {
+                Text("Natural").tag("natural")
+                Text("Calm").tag("calm")
+                Text("Bright").tag("bright")
+            }.pickerStyle(.segmented)
+            HStack {
+                Text("Speaking pace")
+                Spacer()
+                Text(jarvisVoiceRate < 0.48 ? "Relaxed" :
+                     (jarvisVoiceRate > 0.53 ? "Quick" : "Balanced"))
+                    .foregroundStyle(.secondary)
+            }.font(.caption)
+            Slider(value:$jarvisVoiceRate,in:0.43...0.58,step:0.01)
+            Text("Selected: \(accessory.selectedVoiceLabel)")
+                .font(.caption2).foregroundStyle(.secondary)
+            Button("PREVIEW JARVIS VOICE") {
+                phone.speakExternalReply("Hey, I'm Jarvis. Ready when you are. What's on your mind today?",companion:true)
+            }.buttonStyle(.bordered).tint(.orange)
+            Text("All voices work on your iPhone with no paid service. For more natural voices, download an enhanced or premium English voice in iPhone Settings → Accessibility → Spoken Content → Voices. Only installed voices appear here.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.orange.opacity(0.06),in:RoundedRectangle(cornerRadius:10))
     }
 
     private func section<Content: View>(_ title:String, @ViewBuilder content:()->Content) -> some View {

@@ -11,6 +11,11 @@ struct SolosAccessoryInfo: Identifiable {
     let protocols: [String]
 }
 
+struct JarvisVoiceOption: Identifiable {
+    let id: String
+    let label: String
+}
+
 /// iOS has no public API to open arbitrary Bluetooth Classic RFCOMM sockets.
 /// ExternalAccessory works only with manufacturer-approved MFi accessories/protocols.
 final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVSpeechSynthesizerDelegate {
@@ -276,6 +281,61 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
 
     var isSpeaking: Bool { speaker.isSpeaking }
 
+    // All choices are voices already available to iOS. There are no accounts,
+    // API keys, online TTS requests, or paid services in this voice path.
+    var englishVoiceOptions: [JarvisVoiceOption] {
+        sortedEnglishVoices().map { voice in
+            let quality = voice.quality == .premium ? "Premium" :
+                          voice.quality == .enhanced ? "Enhanced" : "Standard"
+            return JarvisVoiceOption(id:voice.identifier,
+                                     label:"\(voice.name) • \(voice.language) • \(quality)")
+        }
+    }
+
+    var selectedVoiceLabel: String {
+        guard let voice = selectedVoice() else { return "System voice" }
+        let quality = voice.quality == .premium ? "Premium" :
+                      voice.quality == .enhanced ? "Enhanced" : "Standard"
+        return "\(voice.name) • \(quality)"
+    }
+
+    private func sortedEnglishVoices() -> [AVSpeechSynthesisVoice] {
+        AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.hasPrefix("en-") }
+            .sorted { lhs,rhs in
+                func rank(_ voice:AVSpeechSynthesisVoice) -> Int {
+                    let quality = voice.quality == .premium ? 3 :
+                                  voice.quality == .enhanced ? 2 : 1
+                    return quality * 10 + (voice.language == "en-US" ? 1 : 0)
+                }
+                if rank(lhs) != rank(rhs) { return rank(lhs) > rank(rhs) }
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    private func selectedVoice() -> AVSpeechSynthesisVoice? {
+        let identifier = UserDefaults.standard.string(forKey:"jarvisVoiceIdentifier") ?? "automatic"
+        if identifier != "automatic",
+           let selected = AVSpeechSynthesisVoice(identifier:identifier) {
+            return selected
+        }
+        return sortedEnglishVoices().first ?? AVSpeechSynthesisVoice(language:"en-US")
+    }
+
+    private func naturalUtterance(_ text:String) -> AVSpeechUtterance {
+        let utterance = AVSpeechUtterance(string:text)
+        utterance.voice = selectedVoice()
+        let style = UserDefaults.standard.string(forKey:"jarvisVoiceStyle") ?? "natural"
+        let preferredRate = UserDefaults.standard.object(forKey:"jarvisVoiceRate") as? Double ?? 0.50
+        let rateChange = style == "bright" ? 0.025 : (style == "calm" ? -0.025 : 0)
+        utterance.rate = Float(min(0.62,max(0.40,preferredRate + rateChange)))
+        utterance.pitchMultiplier = style == "bright" ? 1.08 : (style == "calm" ? 0.96 : 1.0)
+        utterance.volume = 1.0
+        utterance.preUtteranceDelay = 0.03
+        utterance.postUtteranceDelay = 0.04
+        return utterance
+    }
+
     func interruptSpeech() {
         stopSpeaking()
     }
@@ -286,19 +346,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     func speakCompanion(_ text:String, style:String) {
         let trimmed = text.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let utterance = AVSpeechUtterance(string:trimmed)
-        let candidates = AVSpeechSynthesisVoice.speechVoices()
-            .filter { $0.language == "en-US" }
-        let best = candidates.sorted {
-            let l = ($0.quality == .premium ? 3 : ($0.quality == .enhanced ? 2 : 1))
-            let r = ($1.quality == .premium ? 3 : ($1.quality == .enhanced ? 2 : 1))
-            return l > r
-        }
-        utterance.voice = best.first ?? AVSpeechSynthesisVoice(language:"en-US")
-        utterance.rate = 0.51
-        utterance.pitchMultiplier = 1.0
-        utterance.preUtteranceDelay = 0.07
-        utterance.postUtteranceDelay = 0.08
+        let utterance = naturalUtterance(trimmed)
         let quality = utterance.voice?.quality == .premium ? "premium" :
                       utterance.voice?.quality == .enhanced ? "enhanced" : "standard"
         beginSpeech(utterance,quality:quality)
@@ -311,11 +359,10 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     func speak(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        speaker.stopSpeaking(at: .immediate)
-        let utterance = AVSpeechUtterance(string: trimmed)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = 0.49
-        beginSpeech(utterance,quality:"system")
+        let utterance = naturalUtterance(trimmed)
+        let quality = utterance.voice?.quality == .premium ? "premium" :
+                      utterance.voice?.quality == .enhanced ? "enhanced" : "standard"
+        beginSpeech(utterance,quality:quality)
     }
 
     private func beginSpeech(_ utterance: AVSpeechUtterance, quality: String) {
