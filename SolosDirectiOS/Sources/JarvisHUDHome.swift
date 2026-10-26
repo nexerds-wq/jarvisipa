@@ -110,8 +110,8 @@ struct JarvisHUDHome: View {
     @State private var rightPrescriptionActivated = false
     @State private var visionDiagnosticActive = false
     @AppStorage("jarvisAllowOnlineSpeech") private var allowOnlineRecognition = false
-    @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = false
-    @AppStorage("jarvisMicrophoneSource") private var microphoneSource = "bluetooth"
+    @AppStorage("jarvisPreferPhoneMicrophone") private var preferPhoneMicrophone = true
+    @AppStorage("jarvisMicrophoneSource") private var microphoneSource = "iphone"
     @AppStorage("jarvisSpeakAnswers") private var speakReplies = true
     @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = true
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -530,7 +530,7 @@ struct JarvisHUDHome: View {
                 Text(translated.isEmpty ? "English translation will appear here" : translated).font(.title3.bold())
                 Toggle("Improve Spanish speech using online recognition",isOn:$allowOnlineRecognition)
                     .font(.caption)
-                Toggle("Use iPhone microphone for people farther away",isOn:$preferPhoneMicrophone)
+                Toggle("Use iPhone microphone for clearer conversation",isOn:$preferPhoneMicrophone)
                     .font(.caption)
                 Button("Retry / download translation models") {
                     startCaptioning()
@@ -1087,15 +1087,15 @@ struct JarvisHUDHome: View {
                 .font(.caption2).foregroundStyle(.secondary)
             Toggle("Allow online speech recognition",isOn:$allowOnlineRecognition)
             Picker("Jarvis microphone",selection:$microphoneSource) {
-                Text("Any Bluetooth headset").tag("bluetooth")
+                Text("iPhone • clearer nearby speech").tag("iphone")
+                Text("Bluetooth headset • hands-free").tag("bluetooth")
                 Text("Solos only").tag("solos")
-                Text("iPhone").tag("iphone")
             }
             .onChange(of:microphoneSource) { _, _ in
                 phone.stopListening()
                 if keepJarvisListening { phone.startListening() }
             }
-            Text("No Solos HUD required: AI voice replies play through the current iOS audio output. Choose your music headset in Control Center. iOS may move audio to the mic headset during listening.")
+            Text("For clear conversations, keep the iPhone microphone near the speaker. For hands-free use, choose your headset; Bluetooth microphone quality depends on the hardware. Supported AirPods can use iOS 26 high-quality recording. Jarvis shows the actual microphone and sample rate while listening.")
                 .font(.caption2).foregroundStyle(.secondary)
             Text("For a speaker 8–10 feet away, point the iPhone microphone toward them and reduce room noise. No software setting guarantees speech recognition at that distance.")
                 .font(.caption2).foregroundStyle(.secondary)
