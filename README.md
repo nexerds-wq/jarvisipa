@@ -21,6 +21,13 @@ The original Solos LCD/OLED display uses a proprietary Bluetooth Classic RFCOMM 
 
 The existing `JarvisGlasses/` folder remains in this repository as an older separate M02S app; the current IPA workflow builds `SolosDirectiOS/` instead.
 
+## Free, natural Jarvis voice (V30)
+
+- In **Advanced → AI • Privacy • Speech → Natural Jarvis Voice**, choose **Automatic** to use the best English voice currently installed on the iPhone, or pick one of the listed voices. The voice list labels Apple's standard, enhanced and premium quality tiers.
+- Choose a **Natural**, **Calm** or **Bright** delivery and adjust the speaking pace. Tap **PREVIEW JARVIS VOICE** to hear the selected voice. The main screen's **VOICE TEST** uses the same setting.
+- All Jarvis responses, including the Hey Jarvis acknowledgement, use the selected voice. Text-to-speech runs locally with Apple's built-in speech synthesizer. There are **no voice subscriptions, online TTS API calls or charges**.
+- To install additional free higher-quality voices, look in iPhone **Settings → Accessibility → Spoken Content → Voices** (menu names can vary by iOS version). Downloaded voices appear in the app after reopening it. A particular TikTok narrator voice is not included or guaranteed; voice quality depends on what iOS provides and which voices are downloaded.
+
 ## Clearer, continuous voice capture (V29)
 
 - The preferred microphone on a fresh installation is the **iPhone mic**, which avoids forcing audio through the lower-quality Bluetooth hands-free call route. An existing saved mic choice is respected. Choose **Advanced → Jarvis microphone → iPhone** if an older installation is still using the headset mic. Keep the phone close enough to hear you clearly.

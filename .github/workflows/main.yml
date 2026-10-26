@@ -38,7 +38,7 @@ jobs:
         working-directory: SolosDirectiOS
         run: |
           set -euo pipefail
-          xcodebuild -project SolosDirect.xcodeproj -scheme SolosDirect -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/jarvis-build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CURRENT_PROJECT_VERSION=29 build
+          xcodebuild -project SolosDirect.xcodeproj -scheme SolosDirect -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/jarvis-build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CURRENT_PROJECT_VERSION=30 build
       - name: Package unsigned IPA
         run: |
           set -euo pipefail
