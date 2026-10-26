@@ -23,14 +23,20 @@ struct JarvisAtmosphere: View {
                 RadialGradient(colors:[JarvisTheme.lavender.opacity(0.12),.clear],
                                center:.trailing,startRadius:30,endRadius:330)
                 Canvas { context,size in
+                    // A transient unbounded GeometryReader measurement must
+                    // never create an unbounded drawing loop during launch.
+                    guard size.width.isFinite, size.height.isFinite,
+                          size.width > 0, size.height > 0 else { return }
+                    let width = min(size.width,2048)
+                    let height = min(size.height,4096)
                     var grid = Path()
-                    for x in stride(from:CGFloat(0),through:size.width,by:36) {
+                    for x in stride(from:CGFloat(0),through:width,by:36) {
                         grid.move(to:CGPoint(x:x,y:0))
-                        grid.addLine(to:CGPoint(x:x,y:size.height))
+                        grid.addLine(to:CGPoint(x:x,y:height))
                     }
-                    for y in stride(from:CGFloat(0),through:size.height,by:36) {
+                    for y in stride(from:CGFloat(0),through:height,by:36) {
                         grid.move(to:CGPoint(x:0,y:y))
-                        grid.addLine(to:CGPoint(x:size.width,y:y))
+                        grid.addLine(to:CGPoint(x:width,y:y))
                     }
                     context.stroke(grid,with:.color(JarvisTheme.cyan.opacity(0.065)),lineWidth:0.5)
                 }
@@ -55,6 +61,7 @@ struct JarvisCoreOrb: View {
         TimelineView(.animation(minimumInterval:1.0/24.0,
                                 paused:reduceMotion || !(userSpeaking || jarvisSpeaking || thinking))) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
+            let animationPhase = time.truncatingRemainder(dividingBy:360)
             let accent = jarvisSpeaking ? JarvisTheme.orange :
                          (userSpeaking ? JarvisTheme.blue : JarvisTheme.cyan)
             let energy = userSpeaking ? min(1.0,0.35 + level * 1.7) :
@@ -74,19 +81,19 @@ struct JarvisCoreOrb: View {
                                                     .white.opacity(0.8),accent.opacity(0.06)],
                                             center:.center),lineWidth:2)
                     .frame(width:202,height:202)
-                    .rotationEffect(.degrees(reduceMotion ? -35 : time * 17))
+                    .rotationEffect(.degrees(reduceMotion ? -35 : animationPhase * 17))
                 Circle()
                     .trim(from:0.05,to:0.36)
                     .stroke(accent.opacity(0.94),style:StrokeStyle(lineWidth:5,lineCap:.round))
                     .frame(width:184,height:184)
-                    .rotationEffect(.degrees(reduceMotion ? 80 : -time * 30))
+                    .rotationEffect(.degrees(reduceMotion ? 80 : -animationPhase * 30))
                     .shadow(color:accent.opacity(0.8),radius:12)
                 Circle()
                     .trim(from:0.5,to:0.78)
                     .stroke(JarvisTheme.lavender.opacity(0.85),
                             style:StrokeStyle(lineWidth:3,lineCap:.round))
                     .frame(width:162,height:162)
-                    .rotationEffect(.degrees(reduceMotion ? -30 : time * 22))
+                    .rotationEffect(.degrees(reduceMotion ? -30 : animationPhase * 22))
                 Circle()
                     .fill(RadialGradient(colors:[accent.opacity(0.40),JarvisTheme.ink.opacity(0.95),
                                                  .black],center:.topLeading,

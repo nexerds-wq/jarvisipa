@@ -107,6 +107,8 @@ struct JarvisHUDHome: View {
     @State private var companionLastResponse = Date.distantPast
     @State private var showConnection = false
     @State private var showSettings = false
+    @State private var firstFrameReady = false
+    @State private var launchPrepared = false
     @State private var showHUDTools = false
     @State private var showMemoryControls = false
     @State private var jarvisSpeaking = false
@@ -153,6 +155,42 @@ struct JarvisHUDHome: View {
 
     private var mainLayout: some View {
         NavigationStack {
+            Group {
+                if firstFrameReady {
+                    dashboardLayout
+                } else {
+                    VStack(spacing:16) {
+                        Image(systemName:"waveform.path.ecg.rectangle.fill")
+                            .font(.system(size:54,weight:.thin))
+                            .foregroundStyle(JarvisTheme.cyan)
+                        Text("J A R V I S")
+                            .font(.system(size:30,weight:.black,design:.rounded))
+                            .foregroundStyle(.white)
+                        Text("STARTING YOUR COMMAND CENTER")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(JarvisTheme.muted)
+                        ProgressView().tint(JarvisTheme.cyan)
+                    }
+                    .frame(maxWidth:.infinity,maxHeight:.infinity)
+                    .background(JarvisTheme.ink)
+                }
+            }
+            .toolbar(.hidden,for:.navigationBar)
+            .tint(JarvisTheme.cyan)
+        }
+        .overlay {
+            if firstFrameReady {
+                JarvisVoiceBorder(level:max(phone.microphoneLevel,captions.microphoneLevel),
+                                  userSpeaking:phone.userVoiceActive || captions.voiceActive,
+                                  jarvisSpeaking:accessory.speechIsActive)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private var dashboardLayout: some View {
             ZStack {
                 JarvisAtmosphere()
                 ScrollView {
@@ -175,17 +213,6 @@ struct JarvisHUDHome: View {
                 }
                 .scrollIndicators(.hidden)
             }
-            .toolbar(.hidden,for:.navigationBar)
-            .tint(JarvisTheme.cyan)
-        }
-        .overlay {
-            JarvisVoiceBorder(level:max(phone.microphoneLevel,captions.microphoneLevel),
-                              userSpeaking:phone.userVoiceActive || captions.voiceActive,
-                              jarvisSpeaking:accessory.speechIsActive)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
     }
 
     @ViewBuilder private var weatherAlertStrip: some View {
@@ -297,6 +324,8 @@ struct JarvisHUDHome: View {
         mainLayout
         .preferredColorScheme(.dark)
         .onAppear {
+            guard !launchPrepared else { return }
+            launchPrepared = true
             handsFree.onModeChange = { newMode in selectMode(newMode) }
             phone.onHUDVoiceCommand = { spoken in routeVoiceHUDCommand(spoken,wakeAlreadyVerified:true) }
             accessory.onAccessoryPacket = { data in handsFree.input(data) }
@@ -311,16 +340,24 @@ struct JarvisHUDHome: View {
                     }
                 }
             }
-            if mediaButtonsForHUD { handsFree.enableMediaButtons() }
-            accessory.refresh()
-            phone.refreshSensors()
-            weatherGuardian.start()
-            if companionEnabled && companionSoundCues { emotionCues.start() }
-            requestHeartRate()
-            if keepJarvisListening { phone.startListening() }
-            selectMode(0)
-            restorePinnedMessageIfNeeded()
-            consumeShortcutMessage()
+            Task { @MainActor in
+                // Let SpringBoard see a real frame before any privacy prompts,
+                // camera/audio session setup, GPS request or bitmap rendering.
+                try? await Task.sleep(for:.milliseconds(250))
+                firstFrameReady = true
+                try? await Task.sleep(for:.milliseconds(550))
+                if mediaButtonsForHUD { handsFree.enableMediaButtons() }
+                accessory.refresh()
+                phone.refreshSensors()
+                selectMode(0)
+                restorePinnedMessageIfNeeded()
+                consumeShortcutMessage()
+                try? await Task.sleep(for:.milliseconds(350))
+                weatherGuardian.start()
+                if companionEnabled && companionSoundCues { emotionCues.start() }
+                requestHeartRate()
+                if keepJarvisListening && scenePhase == .active { phone.startListening() }
+            }
         }
         .onOpenURL { url in acceptIncomingMessageURL(url) }
         .onChange(of:keepJarvisListening) { _, enabled in
