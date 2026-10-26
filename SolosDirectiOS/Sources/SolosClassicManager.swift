@@ -37,6 +37,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     private let accessoryManager = EAAccessoryManager.shared()
     private let speaker = AVSpeechSynthesizer()
     private var activeUtterance: AVSpeechUtterance?
+    private var remainingSpeechBeats: [AVSpeechUtterance] = []
     private var session: EASession?
     private var inputStream: InputStream?
     private var outputStream: OutputStream?
@@ -322,18 +323,28 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         return sortedEnglishVoices().first ?? AVSpeechSynthesisVoice(language:"en-US")
     }
 
-    private func naturalUtterance(_ text:String) -> AVSpeechUtterance {
+    private func naturalUtterance(_ text:String,
+                                  tone:JarvisSpeechPerformance.Tone = .natural) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string:text)
         utterance.voice = selectedVoice()
         let style = UserDefaults.standard.string(forKey:"jarvisVoiceStyle") ?? "natural"
         let preferredRate = UserDefaults.standard.object(forKey:"jarvisVoiceRate") as? Double ?? 0.50
         let rateChange = style == "bright" ? 0.025 : (style == "calm" ? -0.025 : 0)
-        utterance.rate = Float(min(0.62,max(0.40,preferredRate + rateChange)))
-        utterance.pitchMultiplier = style == "bright" ? 1.08 : (style == "calm" ? 0.96 : 1.0)
+        let intensity = UserDefaults.standard.object(forKey:"jarvisVoiceExpressiveness") as? Double ?? 0.65
+        let expression = JarvisSpeechPerformance.adjustments(for:tone,intensity:intensity)
+        utterance.rate = Float(min(0.62,max(0.40,preferredRate + rateChange + expression.rate)))
+        let baselinePitch = style == "bright" ? 1.08 : (style == "calm" ? 0.96 : 1.0)
+        utterance.pitchMultiplier = Float(min(1.20,max(0.85,baselinePitch + expression.pitch)))
         utterance.volume = 1.0
-        utterance.preUtteranceDelay = 0.03
-        utterance.postUtteranceDelay = 0.04
+        utterance.preUtteranceDelay = 0.015
+        utterance.postUtteranceDelay = expression.pause
         return utterance
+    }
+
+    private func expressiveUtterances(_ text:String) -> [AVSpeechUtterance] {
+        let enabled = UserDefaults.standard.object(forKey:"jarvisExpressiveSpeech") as? Bool ?? true
+        return JarvisSpeechPerformance.beats(for:text,expressive:enabled)
+            .map { naturalUtterance($0.text,tone:$0.tone) }
     }
 
     func interruptSpeech() {
@@ -346,26 +357,30 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     func speakCompanion(_ text:String, style:String) {
         let trimmed = text.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let utterance = naturalUtterance(trimmed)
-        let quality = utterance.voice?.quality == .premium ? "premium" :
-                      utterance.voice?.quality == .enhanced ? "enhanced" : "standard"
-        beginSpeech(utterance,quality:quality)
+        speakExpressively(trimmed)
     }
 
     func stopSpeaking() {
+        remainingSpeechBeats.removeAll()
         if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
     }
 
     func speak(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let utterance = naturalUtterance(trimmed)
-        let quality = utterance.voice?.quality == .premium ? "premium" :
-                      utterance.voice?.quality == .enhanced ? "enhanced" : "standard"
-        beginSpeech(utterance,quality:quality)
+        speakExpressively(trimmed)
     }
 
-    private func beginSpeech(_ utterance: AVSpeechUtterance, quality: String) {
+    private func speakExpressively(_ text:String) {
+        let utterances = expressiveUtterances(text)
+        guard let first = utterances.first else { return }
+        let quality = first.voice?.quality == .premium ? "premium" :
+                      first.voice?.quality == .enhanced ? "enhanced" : "standard"
+        beginSpeech(utterances,quality:quality)
+    }
+
+    private func beginSpeech(_ utterances: [AVSpeechUtterance], quality: String) {
+        guard let first = utterances.first else { return }
         // Do not switch to an HFP call route for replies: it can make Bluetooth
         // audio silent or low quality. The microphone is paused by the caller.
         do {
@@ -377,11 +392,13 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
             status = "Jarvis audio setup failed: \(error.localizedDescription)"
             // Try system speech anyway: an existing output route may still work.
         }
+        remainingSpeechBeats.removeAll()
         if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
-        activeUtterance = utterance
+        remainingSpeechBeats = Array(utterances.dropFirst())
+        activeUtterance = first
         speechIsActive = false
-        speaker.speak(utterance)
-        status = "Jarvis voice queued via \(audioRoute) (\(utterance.voice?.name ?? "system voice"), \(quality))"
+        speaker.speak(first)
+        status = "Jarvis voice queued via \(audioRoute) (\(first.voice?.name ?? "system voice"), \(quality), \(utterances.count) speech beats)"
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
@@ -393,6 +410,13 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     private func finishSpeech(_ utterance: AVSpeechUtterance) {
         // Cancellation of an older utterance must not finish the new answer.
         guard utterance === activeUtterance else { return }
+        if !remainingSpeechBeats.isEmpty {
+            let next = remainingSpeechBeats.removeFirst()
+            activeUtterance = next
+            // One microphone handoff spans the whole reply, not each sentence.
+            speaker.speak(next)
+            return
+        }
         activeUtterance = nil
         speechIsActive = false
         onSpeechCompleted?()

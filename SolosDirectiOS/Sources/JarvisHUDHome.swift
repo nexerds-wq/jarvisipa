@@ -17,9 +17,23 @@ struct JarvisHUDHome: View {
     @StateObject private var music = JarvisAppleMusic()
     @StateObject private var weatherGuardian = JarvisWeatherGuardian()
     @StateObject private var smartTasks = JarvisSmartTasks()
+    @StateObject private var productivity = JarvisProductivity()
+    @StateObject private var areaIntelligence = JarvisAreaIntelligence()
+    @StateObject private var researchIntelligence = JarvisAreaIntelligence()
     @State private var smartTaskTitle = ""
     @State private var smartTaskMinutes = 10
     @State private var smartTaskKind = "reminder"
+    @State private var safetyArea = ""
+    @State private var researchTopic = ""
+    @State private var noteDraft = ""
+    @State private var reminderDraft = ""
+    @State private var alarmDraft = "Jarvis alarm"
+    @State private var reminderDue = Date().addingTimeInterval(3600)
+    @State private var alarmDue = Date().addingTimeInterval(3600)
+    @State private var showSafetyTools = false
+    @State private var showResearchTools = false
+    @State private var showProductivityTools = false
+    @State private var lastTrafficRefresh = Date.distantPast
     private let health = HKHealthStore()
 
     @Environment(\.scenePhase) private var scenePhase
@@ -116,10 +130,16 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisVoiceIdentifier") private var jarvisVoiceIdentifier = "automatic"
     @AppStorage("jarvisVoiceStyle") private var jarvisVoiceStyle = "natural"
     @AppStorage("jarvisVoiceRate") private var jarvisVoiceRate = 0.50
+    @AppStorage("jarvisExpressiveSpeech") private var expressiveSpeech = true
+    @AppStorage("jarvisPatientTurnTaking") private var patientTurnTaking = true
+    @AppStorage("jarvisAutoTrafficResearch") private var autoTrafficResearch = true
+    @AppStorage("jarvisVoiceExpressiveness") private var voiceExpressiveness = 0.65
     @AppStorage("jarvisLockScreenWake") private var keepJarvisListening = true
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let names = ["DASHBOARD","NAVIGATION","CAPTIONS","TRANSLATE","MESSAGES","JARVIS","TIMERS"]
-    private let availableHUDModes = [0,5]
+    private let modeIcons = ["square.grid.2x2","location.north.line","captions.bubble",
+                             "character.bubble","message","sparkles","timer"]
+    private let availableHUDModes = [0,1,2,3,4,5,6]
     private let locales: [(String,String)] = [
         ("es-ES","Spanish"),("fr-FR","French"),("de-DE","German"),
         ("it-IT","Italian"),("pt-BR","Portuguese"),("ja-JP","Japanese"),
@@ -133,25 +153,30 @@ struct JarvisHUDHome: View {
 
     private var mainLayout: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment:.leading, spacing:14) {
-                    header
-                    weatherAlertStrip
-                    jarvisPanel
-                    preview
-                    hudNavigationButtons
-                    hudToolDisclosure
-                    advancedPanels
+            ZStack {
+                JarvisAtmosphere()
+                ScrollView {
+                    VStack(alignment:.leading,spacing:18) {
+                        header
+                        weatherAlertStrip
+                        jarvisHero
+                        jarvisPanel
+                        quickStatus
+                        intelligenceDeck
+                        preview
+                        hudNavigationButtons
+                        hudToolDisclosure
+                        advancedPanels
+                        footer
+                    }
+                    .padding(.horizontal,16)
+                    .padding(.top,18)
+                    .padding(.bottom,42)
                 }
-                .padding(15)
+                .scrollIndicators(.hidden)
             }
-            .background(Color.black)
-            .navigationTitle("JARVIS")
-            .toolbar {
-                ToolbarItem(placement:.topBarTrailing) {
-                    Button(showSettings ? "Done" : "Advanced") { showSettings.toggle() }
-                }
-            }
+            .toolbar(.hidden,for:.navigationBar)
+            .tint(JarvisTheme.cyan)
         }
         .overlay {
             JarvisVoiceBorder(level:max(phone.microphoneLevel,captions.microphoneLevel),
@@ -165,25 +190,44 @@ struct JarvisHUDHome: View {
 
     @ViewBuilder private var weatherAlertStrip: some View {
         if !weatherGuardian.banner.isEmpty {
-            Text(weatherGuardian.banner).font(.caption.bold())
-                .foregroundStyle(.red)
+            Label(weatherGuardian.banner,systemImage:"exclamationmark.triangle.fill")
+                .font(.caption.bold())
+                .foregroundStyle(JarvisTheme.orange)
+                .padding(12)
+                .frame(maxWidth:.infinity,alignment:.leading)
+                .background(JarvisTheme.orange.opacity(0.12),
+                            in:RoundedRectangle(cornerRadius:12))
         }
     }
 
     private var hudNavigationButtons: some View {
-        HStack(spacing:12) {
-            Button("◀ BACK") { handsFree.setMode(mode == 0 ? 5 : 0,force:true) }
-            Spacer()
-            Text(mode == 0 ? "DASHBOARD" : "JARVIS AI").font(.caption.monospaced()).foregroundStyle(.secondary)
-            Spacer()
-            Button("NEXT ▶") { handsFree.setMode(mode == 0 ? 5 : 0,force:true) }
+        HStack(spacing:10) {
+            Button {
+                handsFree.setMode((mode + names.count - 1) % names.count,force:true)
+            } label: {
+                Label("PREV",systemImage:"chevron.left")
+            }
+            .buttonStyle(JarvisActionStyle(prominent:false))
+            VStack(spacing:3) {
+                Text("ACTIVE DISPLAY")
+                    .font(.system(size:9,weight:.semibold,design:.monospaced))
+                    .foregroundStyle(JarvisTheme.muted)
+                Text(names[mode])
+                    .font(.system(size:12,weight:.bold,design:.rounded))
+                    .foregroundStyle(.white)
+            }
+            .frame(minWidth:108)
+            Button {
+                handsFree.setMode((mode + 1) % names.count,force:true)
+            } label: {
+                Label("NEXT",systemImage:"chevron.right")
+            }
+            .buttonStyle(JarvisActionStyle(prominent:false))
         }
-        .buttonStyle(.borderedProminent)
-        .tint(.green)
     }
 
     private var hudToolDisclosure: some View {
-        DisclosureGroup("HUD TOOLS · " + names[mode],isExpanded:$showHUDTools) {
+        DisclosureGroup(isExpanded:$showHUDTools) {
             hudModePicker
             if hudSleeping {
                 Text(lifecycleStatus).font(.caption)
@@ -191,25 +235,45 @@ struct JarvisHUDHome: View {
             } else {
                 modeControls
             }
+        } label: {
+            HStack(spacing:10) {
+                Image(systemName:"slider.horizontal.3")
+                    .foregroundStyle(JarvisTheme.cyan)
+                Text("HUD WORKSPACE")
+                    .font(.system(size:12,weight:.bold,design:.rounded))
+                    .tracking(1.3)
+                Spacer()
+                Text(names[mode])
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(JarvisTheme.muted)
+            }
         }
         .font(.subheadline)
-        .padding(11)
-        .background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:12))
+        .tint(JarvisTheme.cyan)
+        .padding(15)
+        .background(JarvisTheme.panel.opacity(0.92),
+                    in:RoundedRectangle(cornerRadius:19,style:.continuous))
+        .overlay(RoundedRectangle(cornerRadius:19).strokeBorder(.white.opacity(0.10)))
     }
 
     private var hudModePicker: some View {
         ScrollView(.horizontal,showsIndicators:false) {
             HStack(spacing:8) {
                 ForEach(availableHUDModes,id:\.self) { index in
-                    Button(names[index]) { handsFree.setMode(index,force:true) }
-                        .font(.caption.bold())
-                        .padding(.horizontal,11).padding(.vertical,9)
-                        .background(mode == index ? Color.green.opacity(0.28) : Color.white.opacity(0.08),
-                                    in:RoundedRectangle(cornerRadius:9))
-                        .foregroundStyle(.white)
+                    Button {
+                        handsFree.setMode(index,force:true)
+                    } label: {
+                        Label(names[index],systemImage:modeIcons[index])
+                            .font(.system(size:10,weight:.bold,design:.rounded))
+                            .padding(.horizontal,12).padding(.vertical,11)
+                            .foregroundStyle(mode == index ? JarvisTheme.ink : .white)
+                            .background(mode == index ? JarvisTheme.cyan : .white.opacity(0.08),
+                                        in:Capsule())
+                    }
                 }
             }
         }
+        .padding(.top,12)
     }
 
     @ViewBuilder private var advancedPanels: some View {
@@ -223,8 +287,10 @@ struct JarvisHUDHome: View {
             visionCalibrationPanel
             settingsPanel
         }
-        Text("Glasses display requires an authorized accessory connection; Bluetooth audio pairing alone does not provide HUD access.")
-            .font(.caption2).foregroundStyle(.orange)
+        Label("Glasses need an authorized display connection. Bluetooth audio alone cannot send HUD images.",
+              systemImage:"info.circle")
+            .font(.caption2).foregroundStyle(JarvisTheme.muted)
+            .padding(.horizontal,4)
     }
 
     private var hudWithLifecycle: some View {
@@ -263,6 +329,7 @@ struct JarvisHUDHome: View {
         }
         .onChange(of:scenePhase) { _, phase in
             if phase == .active {
+                weatherGuardian.refresh()
                 if (mode == 2 || mode == 3) && !captions.isListening {
                     startCaptioning()
                 } else if keepJarvisListening && mode != 2 && mode != 3 {
@@ -371,10 +438,20 @@ struct JarvisHUDHome: View {
             }
         }
         .onChange(of:weatherGuardian.banner) { _,_ in drawHUD() }
+        .onChange(of:weatherGuardian.nearbyCity) { _, city in
+            if safetyArea.isEmpty { safetyArea = city }
+        }
         .onChange(of:companionEnabled) { _,_ in syncEmotionCues() }
         .onChange(of:companionSoundCues) { _,_ in syncEmotionCues() }
         .onReceive(ticker) { now in
             if hudSleeping { return }
+            if autoTrafficResearch && scenePhase == .active && !areaIntelligence.loading &&
+               now.timeIntervalSince(lastTrafficRefresh) >= 900 &&
+               !weatherGuardian.nearbyCity.isEmpty {
+                lastTrafficRefresh = now
+                let city = weatherGuardian.nearbyCity
+                Task { await areaIntelligence.scanTrafficNews(area:city) }
+            }
             if mode == 0 || !smartTasks.pinned.isEmpty { drawHUD(throttled:true) }
             if mode == 4 && messagePages.count > 1 && now.timeIntervalSince(lastMessagePageAt) >= 7 {
                 currentMessagePage = (currentMessagePage + 1) % messagePages.count
@@ -444,43 +521,429 @@ struct JarvisHUDHome: View {
     }
 
     private var header: some View {
-        HStack(spacing:9) {
-            Image(systemName:"eyeglasses").font(.title2)
-            VStack(alignment:.leading,spacing:2) {
-                Text("SOLOS  /  JARVIS").font(.headline.monospaced()).foregroundStyle(.green)
-                Text(lastVoiceHUDCommand.isEmpty ? "HUD FIRST • NO EFFECTS" : lastVoiceHUDCommand)
-                    .font(.caption2).foregroundStyle(.secondary)
+        HStack(spacing:12) {
+            Image(systemName:"waveform.path.ecg.rectangle.fill")
+                .font(.system(size:25,weight:.light))
+                .foregroundStyle(JarvisTheme.cyan)
+                .frame(width:46,height:46)
+                .background(JarvisTheme.cyan.opacity(0.11),
+                            in:RoundedRectangle(cornerRadius:14))
+                .overlay(RoundedRectangle(cornerRadius:14)
+                    .strokeBorder(JarvisTheme.cyan.opacity(0.30)))
+            VStack(alignment:.leading,spacing:3) {
+                HStack(spacing:6) {
+                    Text("J A R V I S")
+                        .font(.system(size:20,weight:.black,design:.rounded))
+                        .foregroundStyle(.white)
+                    Text("OS")
+                        .font(.system(size:9,weight:.black,design:.monospaced))
+                        .padding(.horizontal,6).padding(.vertical,3)
+                        .foregroundStyle(JarvisTheme.cyan)
+                        .background(JarvisTheme.cyan.opacity(0.12),in:Capsule())
+                }
+                Text("PERSONAL INTELLIGENCE  /  SOLOS")
+                    .font(.system(size:9,weight:.medium,design:.monospaced))
+                    .tracking(1.0)
+                    .foregroundStyle(JarvisTheme.muted)
             }
             Spacer()
-            Circle().fill(accessory.connectedProtocol.isEmpty ? .orange : .green).frame(width:11,height:11)
+            Button {
+                showSettings.toggle()
+            } label: {
+                Image(systemName:showSettings ? "xmark" : "slider.horizontal.3")
+                    .font(.system(size:18,weight:.medium))
+                    .foregroundStyle(JarvisTheme.cyan)
+                    .frame(width:44,height:44)
+                    .background(.white.opacity(0.07),in:Circle())
+                    .overlay(Circle().strokeBorder(.white.opacity(0.13)))
+            }
+            .accessibilityLabel(showSettings ? "Close advanced settings" : "Open advanced settings")
         }
+    }
+
+    private var jarvisHero: some View {
+        VStack(spacing:7) {
+            HStack(spacing:8) {
+                Circle()
+                    .fill(accessory.speechIsActive ? JarvisTheme.orange :
+                          (phone.listening || captions.isListening ? JarvisTheme.cyan : JarvisTheme.muted))
+                    .frame(width:7,height:7)
+                Text("NEURAL VOICE INTERFACE")
+                    .font(.system(size:10,weight:.bold,design:.monospaced))
+                    .tracking(2)
+                    .foregroundStyle(JarvisTheme.muted)
+                Spacer()
+                Text("31 / CORE")
+                    .font(.system(size:10,weight:.semibold,design:.monospaced))
+                    .foregroundStyle(JarvisTheme.cyan.opacity(0.8))
+            }
+            JarvisCoreOrb(userSpeaking:phone.userVoiceActive || captions.voiceActive,
+                          jarvisSpeaking:accessory.speechIsActive,
+                          thinking:companionBusy || aiBusy,
+                          level:max(phone.microphoneLevel,captions.microphoneLevel))
+            Text(accessory.speechIsActive ? "I'M SPEAKING" :
+                 (phone.userVoiceActive || captions.voiceActive ? "I'M LISTENING" :
+                  (companionBusy || aiBusy ? "WORKING ON IT" : "AT YOUR SERVICE")))
+                .font(.system(size:23,weight:.bold,design:.rounded))
+                .tracking(1.7)
+                .foregroundStyle(.white)
+            Text(accessory.speechIsActive ? "Orange means Jarvis is replying." :
+                 (phone.userVoiceActive || captions.voiceActive ? "Take your time. I'll wait until you're finished." :
+                  (phone.listening || captions.isListening ? "Just say Hey Jarvis and speak naturally." :
+                   "Your command center is ready.")))
+                .font(.system(size:12,weight:.medium))
+                .foregroundStyle(JarvisTheme.muted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal,12)
+            HStack(spacing:9) {
+                Label(phone.userVoiceActive || captions.voiceActive ? "YOU • LIVE" : "YOUR VOICE",
+                      systemImage:"mic.fill")
+                    .foregroundStyle(phone.userVoiceActive || captions.voiceActive ? JarvisTheme.cyan : JarvisTheme.muted)
+                Rectangle().fill(.white.opacity(0.16)).frame(width:1,height:16)
+                Label(accessory.speechIsActive ? "JARVIS • LIVE" : "JARVIS VOICE",
+                      systemImage:"speaker.wave.2.fill")
+                    .foregroundStyle(accessory.speechIsActive ? JarvisTheme.orange : JarvisTheme.muted)
+            }
+            .font(.system(size:10,weight:.bold,design:.rounded))
+            .padding(.top,8)
+            .accessibilityElement(children:.combine)
+            HStack(spacing:10) {
+                Button {
+                    if hudSleeping { wakeJarvis() }
+                    else if phone.listening || captions.isListening {
+                        keepJarvisListening = false
+                        if mode == 2 || mode == 3 {
+                            captions.stop()
+                            phone.setHUDCaptionsActive(false)
+                        }
+                        phone.stopListening()
+                    } else {
+                        keepJarvisListening = true
+                        if mode == 2 || mode == 3 { startCaptioning() }
+                        else { phone.startListening() }
+                    }
+                } label: {
+                    Label(phone.listening || captions.isListening ? "END LISTENING" : "START LISTENING",
+                          systemImage:phone.listening || captions.isListening ? "mic.slash" : "mic")
+                }
+                .buttonStyle(JarvisActionStyle(prominent:true,tint:JarvisTheme.cyan))
+                Button {
+                    if accessory.speechIsActive {
+                        accessory.interruptSpeech()
+                    } else {
+                        phone.speakExternalReply("Hey, I'm Jarvis. I'm here and ready when you are.",companion:true)
+                    }
+                } label: {
+                    Label(accessory.speechIsActive ? "STOP JARVIS" : "HEAR MY VOICE",
+                          systemImage:accessory.speechIsActive ? "stop.fill" : "waveform")
+                }
+                .buttonStyle(JarvisActionStyle(prominent:false))
+            }
+            .padding(.top,17)
+        }
+        .padding(17)
+        .background(JarvisTheme.panel.opacity(0.82),
+                    in:RoundedRectangle(cornerRadius:25,style:.continuous))
+        .overlay(RoundedRectangle(cornerRadius:25,style:.continuous)
+            .strokeBorder(LinearGradient(colors:[JarvisTheme.cyan.opacity(0.45),
+                                                 .white.opacity(0.06),JarvisTheme.lavender.opacity(0.22)],
+                                         startPoint:.topLeading,endPoint:.bottomTrailing),lineWidth:1))
+        .shadow(color:JarvisTheme.blue.opacity(0.18),radius:23,y:12)
+    }
+
+    private var quickStatus: some View {
+        HStack(spacing:10) {
+            Button {
+                showConnection = true
+                accessory.refresh()
+            } label: {
+                VStack(alignment:.leading,spacing:9) {
+                    Label("GLASSES LINK",systemImage:"eyeglasses")
+                        .font(.system(size:10,weight:.bold,design:.rounded))
+                        .foregroundStyle(JarvisTheme.muted)
+                    HStack {
+                        Circle().fill(accessory.connectedProtocol.isEmpty ? JarvisTheme.orange : JarvisTheme.cyan)
+                            .frame(width:7,height:7)
+                        Text(accessory.connectedProtocol.isEmpty ? "Preview mode" : "Connected")
+                            .font(.system(size:14,weight:.bold,design:.rounded))
+                            .foregroundStyle(.white)
+                    }
+                    Text("Tap to diagnose →")
+                        .font(.system(size:10,weight:.medium))
+                        .foregroundStyle(JarvisTheme.cyan)
+                }
+                .frame(maxWidth:.infinity,alignment:.leading)
+                .padding(14)
+            }
+            .buttonStyle(.plain)
+            .background(JarvisTheme.panel.opacity(0.9),
+                        in:RoundedRectangle(cornerRadius:17))
+            Button {
+                showHUDTools = true
+            } label: {
+                VStack(alignment:.leading,spacing:9) {
+                    Label("HUD MODULE",systemImage:modeIcons[mode])
+                        .font(.system(size:10,weight:.bold,design:.rounded))
+                        .foregroundStyle(JarvisTheme.muted)
+                    Text(names[mode].capitalized)
+                        .font(.system(size:14,weight:.bold,design:.rounded))
+                        .foregroundStyle(.white)
+                    Text("Explore modules →")
+                        .font(.system(size:10,weight:.medium))
+                        .foregroundStyle(JarvisTheme.cyan)
+                }
+                .frame(maxWidth:.infinity,alignment:.leading)
+                .padding(14)
+            }
+            .buttonStyle(.plain)
+            .background(JarvisTheme.panel.opacity(0.9),
+                        in:RoundedRectangle(cornerRadius:17))
+        }
+    }
+
+    private var intelligenceDeck: some View {
+        VStack(spacing:12) {
+            DisclosureGroup(isExpanded:$showSafetyTools) {
+                VStack(alignment:.leading,spacing:10) {
+                    Label(weatherGuardian.banner.isEmpty ? "No active alert displayed" : weatherGuardian.banner,
+                          systemImage:weatherGuardian.banner.isEmpty ? "checkmark.shield" : "exclamationmark.triangle")
+                        .font(.caption.bold())
+                        .foregroundStyle(weatherGuardian.banner.isEmpty ? JarvisTheme.muted : JarvisTheme.orange)
+                    Text(weatherGuardian.status)
+                        .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                    TextField("City or area for traffic reports",text:$safetyArea)
+                        .textFieldStyle(.roundedBorder)
+                    HStack(spacing:9) {
+                        Button("CHECK WEATHER") { weatherGuardian.refresh() }
+                            .buttonStyle(JarvisActionStyle(prominent:false))
+                        Button {
+                            Task { await areaIntelligence.scanTrafficNews(area:safetyArea) }
+                        } label: {
+                            Text("TRAFFIC REPORTS")
+                        }
+                        .buttonStyle(JarvisActionStyle(prominent:true,tint:JarvisTheme.orange))
+                        .disabled(areaIntelligence.loading)
+                    }
+                    Text(areaIntelligence.status)
+                        .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                    Toggle("Check city traffic headlines every 15 min while open",
+                           isOn:$autoTrafficResearch)
+                        .font(.caption)
+                    if let checked = areaIntelligence.checkedAt {
+                        Text("News checked \(checked.formatted(date:.abbreviated,time:.shortened))")
+                            .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                    }
+                    ForEach(areaIntelligence.headlines) { item in
+                        Link(destination:item.link) {
+                            HStack(alignment:.top,spacing:8) {
+                                Image(systemName:"newspaper")
+                                    .foregroundStyle(JarvisTheme.orange)
+                                Text(item.title)
+                                    .font(.caption)
+                                    .multilineTextAlignment(.leading)
+                                Spacer(minLength:0)
+                                Image(systemName:"arrow.up.right")
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.vertical,5)
+                        }
+                    }
+                    Text("Official NWS warnings cover the US only. Traffic results are news headlines about an area, not live crash detection, police alerts or verified proximity. Never use this as your only safety warning. Checks need an internet connection and iOS may suspend updates when the app is closed.")
+                        .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                }
+                .padding(.top,12)
+            } label: {
+                deckLabel("SAFETY WATCH",symbol:"shield.lefthalf.filled",detail:"Weather + reported traffic",color:JarvisTheme.orange)
+            }
+            .padding(15)
+            .background(JarvisTheme.panel.opacity(0.9),in:RoundedRectangle(cornerRadius:18))
+
+            DisclosureGroup(isExpanded:$showResearchTools) {
+                VStack(alignment:.leading,spacing:10) {
+                    TextField("Research any topic...",text:$researchTopic)
+                        .textFieldStyle(.roundedBorder)
+                        .submitLabel(.search)
+                        .onSubmit { runResearch() }
+                    Button {
+                        runResearch()
+                    } label: {
+                        Label("RESEARCH FREE SOURCES",systemImage:"magnifyingglass")
+                    }
+                    .buttonStyle(JarvisActionStyle(prominent:true))
+                    .disabled(researchIntelligence.loading)
+                    Text(researchIntelligence.status)
+                        .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                    if !researchIntelligence.researchSummary.isEmpty {
+                        Text("ENCYCLOPEDIA OVERVIEW")
+                            .font(.caption2.bold()).foregroundStyle(JarvisTheme.cyan)
+                        Text(researchIntelligence.researchSummary)
+                            .font(.subheadline).textSelection(.enabled)
+                        if let source = researchIntelligence.sourceURL {
+                            Link("READ ORIGINAL ARTICLE",destination:source)
+                                .font(.caption.bold())
+                        }
+                    }
+                    ForEach(researchIntelligence.headlines) { item in
+                        Link(item.title,destination:item.link)
+                            .font(.caption)
+                    }
+                    Text("Uses public encyclopedia results and published news links. Check original dates and sources. For deeper research, ask Jarvis a follow-up or connect your own Ollama/search setup.")
+                        .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                }
+                .padding(.top,12)
+            } label: {
+                deckLabel("RESEARCH LAB",symbol:"books.vertical",detail:"Wikipedia + recent headlines",color:JarvisTheme.lavender)
+            }
+            .padding(15)
+            .background(JarvisTheme.panel.opacity(0.9),in:RoundedRectangle(cornerRadius:18))
+
+            DisclosureGroup(isExpanded:$showProductivityTools) {
+                VStack(alignment:.leading,spacing:12) {
+                    Text("QUICK NOTE").font(.caption2.bold()).foregroundStyle(JarvisTheme.cyan)
+                    HStack(spacing:8) {
+                        TextField("Remember something...",text:$noteDraft,axis:.vertical)
+                            .lineLimit(1...3).textFieldStyle(.roundedBorder)
+                        Button("SAVE") {
+                            productivity.addNote(noteDraft)
+                            noteDraft = ""
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    ForEach(productivity.notes.prefix(5)) { note in
+                        HStack(alignment:.top,spacing:9) {
+                            Text(note.text)
+                                .font(.caption)
+                                .frame(maxWidth:.infinity,alignment:.leading)
+                            Button {
+                                productivity.deleteNote(note.id)
+                            } label: {
+                                Image(systemName:"trash")
+                                    .foregroundStyle(JarvisTheme.muted)
+                            }
+                            .accessibilityLabel("Delete note")
+                        }
+                        .padding(.vertical,4)
+                    }
+                    Divider().overlay(JarvisTheme.muted.opacity(0.3))
+                    Text("APPLE REMINDERS")
+                        .font(.caption2.bold()).foregroundStyle(JarvisTheme.cyan)
+                    TextField("What should I remind you?",text:$reminderDraft)
+                        .textFieldStyle(.roundedBorder)
+                    DatePicker("When",selection:$reminderDue,in:Date()...,
+                               displayedComponents:[.date,.hourAndMinute])
+                    Button("SAVE TO APPLE REMINDERS") {
+                        Task { await productivity.createAppleReminder(title:reminderDraft,at:reminderDue) }
+                    }
+                    .buttonStyle(JarvisActionStyle(prominent:false))
+                    Divider().overlay(JarvisTheme.muted.opacity(0.3))
+                    Text("SYSTEM ALARM · IOS 26")
+                        .font(.caption2.bold()).foregroundStyle(JarvisTheme.orange)
+                    TextField("Alarm name",text:$alarmDraft)
+                        .textFieldStyle(.roundedBorder)
+                    DatePicker("Alarm time",selection:$alarmDue,in:Date()...,
+                               displayedComponents:[.date,.hourAndMinute])
+                    Button("SCHEDULE SYSTEM ALARM") {
+                        Task { await productivity.createSystemAlarm(title:alarmDraft,at:alarmDue) }
+                    }
+                    .buttonStyle(JarvisActionStyle(prominent:true,tint:JarvisTheme.orange))
+                    Text("AlarmKit creates a real iOS alarm with system alert UI. Apple does not let other apps write directly to Clock's personal alarm list.")
+                        .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                    Divider().overlay(JarvisTheme.muted.opacity(0.3))
+                    Stepper("Quick timer • \(timerMinutes) min",value:$timerMinutes,in:1...180)
+                    Button("START TIMER") {
+                        smartTasks.add(title:"Timer finished",kind:"timer",
+                                       after:TimeInterval(timerMinutes * 60))
+                    }
+                    .buttonStyle(JarvisActionStyle(prominent:false))
+                    Text(productivity.status)
+                        .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                }
+                .padding(.top,12)
+            } label: {
+                deckLabel("LIFE ORGANIZER",symbol:"checklist",detail:"Alarms / reminders / notes / timers",color:JarvisTheme.cyan)
+            }
+            .padding(15)
+            .background(JarvisTheme.panel.opacity(0.9),in:RoundedRectangle(cornerRadius:18))
+        }
+        .tint(JarvisTheme.cyan)
+    }
+
+    private func deckLabel(_ title:String,symbol:String,detail:String,color:Color) -> some View {
+        HStack(spacing:12) {
+            Image(systemName:symbol)
+                .font(.system(size:18))
+                .foregroundStyle(color)
+                .frame(width:37,height:37)
+                .background(color.opacity(0.12),in:RoundedRectangle(cornerRadius:11))
+            VStack(alignment:.leading,spacing:4) {
+                Text(title)
+                    .font(.system(size:12,weight:.heavy,design:.rounded))
+                    .tracking(1.2)
+                    .foregroundStyle(.white)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(JarvisTheme.muted)
+            }
+            Spacer(minLength:0)
+        }
+    }
+
+    private func runResearch() {
+        showResearchTools = true
+        Task { await researchIntelligence.research(researchTopic) }
     }
 
     private var preview: some View {
         VStack(alignment:.leading,spacing:8) {
             HStack {
-                Text("GLASSES DISPLAY 428 × 240").font(.caption.bold()).foregroundStyle(.green)
+                Label("OPTICAL HUD PREVIEW",systemImage:"viewfinder")
+                    .font(.system(size:11,weight:.bold,design:.rounded))
+                    .tracking(1)
+                    .foregroundStyle(JarvisTheme.cyan)
                 Spacer()
-                Text(names[mode]).font(.caption.monospaced())
+                Text("428 × 240")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(JarvisTheme.muted)
             }
             Group {
                 if let image {
                     Image(uiImage:image).resizable().aspectRatio(contentMode:.fit)
                 } else {
-                    Rectangle().fill(.black).overlay(Text("HUD PREVIEW").foregroundStyle(.green))
+                    Rectangle().fill(.black).overlay(Text("AWAITING HUD FRAME")
+                        .font(.caption.monospaced()).foregroundStyle(JarvisTheme.cyan))
                 }
             }
             .aspectRatio(428.0/240.0,contentMode:.fit)
-            .clipShape(RoundedRectangle(cornerRadius:6))
-            .overlay(RoundedRectangle(cornerRadius:6).stroke(.green.opacity(0.4)))
+            .clipShape(RoundedRectangle(cornerRadius:12))
+            .overlay(RoundedRectangle(cornerRadius:12)
+                .strokeBorder(JarvisTheme.cyan.opacity(0.35),lineWidth:1))
             HStack {
                 Text(accessory.connectedProtocol.isEmpty ? "PREVIEW ONLY • NO DISPLAY CONNECTION" : "ACCESSORY SESSION ACTIVE")
                     .font(.caption2.bold())
-                    .foregroundStyle(accessory.connectedProtocol.isEmpty ? .orange : .green)
+                    .foregroundStyle(accessory.connectedProtocol.isEmpty ? JarvisTheme.orange : JarvisTheme.cyan)
                 Spacer()
-                Button("SEND NOW") { drawHUD() }.font(.caption.bold())
+                Button("REFRESH") { drawHUD() }
+                    .font(.caption.bold())
+                    .foregroundStyle(JarvisTheme.cyan)
             }
-        }.padding(12).background(.white.opacity(0.06),in:RoundedRectangle(cornerRadius:12))
+        }
+        .padding(16)
+        .background(JarvisTheme.panel.opacity(0.86),
+                    in:RoundedRectangle(cornerRadius:19))
+        .overlay(RoundedRectangle(cornerRadius:19)
+            .strokeBorder(.white.opacity(0.10)))
+    }
+
+    private var footer: some View {
+        HStack(spacing:8) {
+            Image(systemName:"shield.lefthalf.filled")
+            Text("JARVIS OS  ·  ON-DEVICE VOICE  ·  iOS")
+        }
+        .font(.system(size:9,weight:.semibold,design:.monospaced))
+        .tracking(1.3)
+        .foregroundStyle(JarvisTheme.muted.opacity(0.75))
+        .frame(maxWidth:.infinity)
+        .padding(.top,2)
     }
 
     @ViewBuilder
@@ -808,67 +1271,92 @@ struct JarvisHUDHome: View {
     }
 
     private var jarvisPanel: some View {
-        section("JARVIS • YOUR AI") {
-            HStack(spacing:14) {
-                Label(phone.userVoiceActive || captions.voiceActive ? "YOU SPEAKING" : "BLUE • YOUR VOICE",
-                      systemImage:"waveform")
-                    .foregroundStyle(phone.userVoiceActive || captions.voiceActive ? .blue : .secondary)
-                Label(accessory.speechIsActive ? "JARVIS SPEAKING" : "ORANGE • JARVIS",
-                      systemImage:"speaker.wave.2.fill")
-                    .foregroundStyle(accessory.speechIsActive ? .orange : .secondary)
-            }
-            .font(.caption2.bold())
-            .accessibilityElement(children:.combine)
-            HStack(spacing:8) {
-                Circle().fill(companionBusy || accessory.speechIsActive ? .orange : .green)
-                    .frame(width:9,height:9)
-                Text(companionBusy ? "Thinking..." : (accessory.speechIsActive ? "Speaking..." : "Ready to talk"))
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("VOICE TEST") {
-                    phone.speakExternalReply("Hey. I'm Jarvis. Tell me what you're working on, and we'll figure it out together.",companion:true)
-                }.font(.caption)
-            }
+        section("CONVERSATION  /  LIVE") {
             Text(mode == 2 || mode == 3 ? captions.status : phone.voiceStatus)
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(JarvisTheme.muted)
             let latestWords = mode == 2 || mode == 3 ?
                 (captions.partial.isEmpty ? captions.latestFinal : captions.partial) : phone.transcribed
             if !latestWords.isEmpty {
-                Text("Last heard: " + latestWords)
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                VStack(alignment:.leading,spacing:5) {
+                    Label("YOU SAID",systemImage:"mic.fill")
+                        .font(.system(size:9,weight:.bold,design:.monospaced))
+                        .foregroundStyle(JarvisTheme.cyan)
+                    Text(latestWords)
+                        .font(.subheadline)
+                        .lineLimit(3)
+                }
+                .frame(maxWidth:.infinity,alignment:.leading)
+                .padding(11)
+                .background(JarvisTheme.blue.opacity(0.12),
+                            in:RoundedRectangle(cornerRadius:12))
             }
             if phone.aiStatus.hasPrefix("Apple Intelligence unavailable") ||
                phone.aiStatus.hasPrefix("On-device JARVIS error") {
-                Text(phone.aiStatus).font(.caption).foregroundStyle(.orange)
+                Text(phone.aiStatus).font(.caption).foregroundStyle(JarvisTheme.orange)
             }
-            TextField("Ask Jarvis anything...",text:$companionInput,axis:.vertical)
-                .lineLimit(1...4).textFieldStyle(.roundedBorder)
-            HStack {
-                Button("SEND") {
-                    let message = companionInput.trimmingCharacters(in:.whitespacesAndNewlines)
-                    guard !message.isEmpty else { return }
-                    companionInput = ""
-                    talkToCompanion(message)
+            HStack(alignment:.bottom,spacing:9) {
+                TextField("What's on your mind?",text:$companionInput,axis:.vertical)
+                    .lineLimit(1...4)
+                    .padding(.horizontal,13).padding(.vertical,11)
+                    .background(.white.opacity(0.065),in:RoundedRectangle(cornerRadius:13))
+                    .overlay(RoundedRectangle(cornerRadius:13)
+                        .strokeBorder(.white.opacity(0.12)))
+                    .submitLabel(.send)
+                    .onSubmit { sendCompanionInput() }
+                Button {
+                    sendCompanionInput()
+                } label: {
+                    Image(systemName:"arrow.up")
+                        .font(.system(size:16,weight:.bold))
+                        .foregroundStyle(JarvisTheme.ink)
+                        .frame(width:42,height:42)
+                        .background(JarvisTheme.cyan,in:RoundedRectangle(cornerRadius:12))
                 }
                 .disabled(companionBusy || companionInput.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
-                Button("TALK") {
+                .accessibilityLabel("Send message to Jarvis")
+            }
+            HStack(spacing:10) {
+                Button {
                     companionEnabled = true
                     companionTurnTaking = true
                     companionSpeak = true
                     companionQuiet = false
                     companionConversationUntil = Date().addingTimeInterval(companionFollowUpSeconds)
-                    selectMode(2)
+                    handsFree.setMode(2,force:true)
                     companionStatus = "Listening for Jarvis voice commands"
+                } label: {
+                    Label("TALK LIVE",systemImage:"waveform")
                 }
-                Button("QUIET") {
+                .buttonStyle(JarvisActionStyle(prominent:true,tint:JarvisTheme.cyan))
+                Button {
                     companionQuiet = true
                     companionConversationUntil = .distantPast
                     accessory.stopSpeaking()
                     jarvisSpeaking = false
                     companionStatus = "Quiet"
+                } label: {
+                    Label("QUIET",systemImage:"speaker.slash")
                 }
-            }.buttonStyle(.borderedProminent)
-            Text(companionReply).font(.body)
+                .buttonStyle(JarvisActionStyle(prominent:false))
+            }
+            if companionBusy || !companionReply.isEmpty {
+                VStack(alignment:.leading,spacing:7) {
+                    Label(companionBusy ? "JARVIS IS THINKING" : "JARVIS REPLIED",
+                          systemImage:"sparkles")
+                        .font(.system(size:9,weight:.bold,design:.monospaced))
+                        .foregroundStyle(JarvisTheme.orange)
+                    Text(companionBusy ? "Putting together a response..." : companionReply)
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth:.infinity,alignment:.leading)
+                .padding(13)
+                .background(JarvisTheme.orange.opacity(0.085),
+                            in:RoundedRectangle(cornerRadius:13))
+                .overlay(RoundedRectangle(cornerRadius:13)
+                    .strokeBorder(JarvisTheme.orange.opacity(0.16)))
+            }
             if companionStatus.hasPrefix("Companion unavailable") {
                 Text(companionStatus).font(.caption).foregroundStyle(.orange)
             }
@@ -921,6 +1409,13 @@ struct JarvisHUDHome: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func sendCompanionInput() {
+        let message = companionInput.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !message.isEmpty, !companionBusy else { return }
+        companionInput = ""
+        talkToCompanion(message)
     }
 
     private func syncEmotionCues() {
@@ -1078,6 +1573,22 @@ struct JarvisHUDHome: View {
             SecureField("Serper Google Search API key (optional)",text:$serperKey).textFieldStyle(.roundedBorder)
             Toggle("Speak Jarvis answers",isOn:$speakReplies)
             voiceSettings
+            Toggle("Expressive, context-aware speaking",isOn:$expressiveSpeech)
+            if expressiveSpeech {
+                HStack {
+                    Text("Voice expression")
+                    Spacer()
+                    Text(voiceExpressiveness < 0.4 ? "Subtle" :
+                         (voiceExpressiveness > 0.78 ? "Dynamic" : "Natural"))
+                        .foregroundStyle(JarvisTheme.muted)
+                }.font(.caption)
+                Slider(value:$voiceExpressiveness,in:0.2...1.0,step:0.05)
+                Text("Jarvis varies sentence pace, pitch and pauses based on the actual words: calmer for support, direct in urgent situations, lighthearted when a joke fits. It does not guess your emotions from your microphone.")
+                    .font(.caption2).foregroundStyle(JarvisTheme.muted)
+            }
+            Toggle("Patient listening • wait for my full thought",isOn:$patientTurnTaking)
+            Text("Jarvis waits through longer natural pauses, gives the wake acknowledgement only after you stop speaking, and doesn't restart its wake listener while answering. Say 'that's all' or 'I'm done' to finish a spoken request sooner.")
+                .font(.caption2).foregroundStyle(JarvisTheme.muted)
             Toggle("Listen for Hey Jarvis when possible",isOn:$keepJarvisListening)
             Toggle("Keep Jarvis microphone active during music (may disrupt playback)",
                    isOn:$listenWhileMusic)
@@ -1144,12 +1655,31 @@ struct JarvisHUDHome: View {
     }
 
     private func section<Content: View>(_ title:String, @ViewBuilder content:()->Content) -> some View {
-        VStack(alignment:.leading,spacing:12) {
-            Text(title).font(.subheadline.bold()).foregroundStyle(.green)
+        VStack(alignment:.leading,spacing:13) {
+            HStack(spacing:8) {
+                Capsule().fill(JarvisTheme.cyan)
+                    .frame(width:3,height:15)
+                    .shadow(color:JarvisTheme.cyan.opacity(0.8),radius:5)
+                Text(title)
+                    .font(.system(size:11,weight:.heavy,design:.rounded))
+                    .tracking(1.5)
+                    .foregroundStyle(JarvisTheme.cyan)
+                Spacer()
+                Image(systemName:"plus")
+                    .font(.system(size:9,weight:.medium))
+                    .foregroundStyle(JarvisTheme.muted.opacity(0.5))
+            }
             content()
         }.frame(maxWidth:.infinity,alignment:.leading)
-            .padding(14)
-            .background(.white.opacity(0.07),in:RoundedRectangle(cornerRadius:12))
+            .padding(16)
+            .background(JarvisTheme.panel.opacity(0.88),
+                        in:RoundedRectangle(cornerRadius:19,style:.continuous))
+            .overlay(RoundedRectangle(cornerRadius:19)
+                .strokeBorder(LinearGradient(colors:[.white.opacity(0.17),
+                                                     .white.opacity(0.035),
+                                                     JarvisTheme.cyan.opacity(0.10)],
+                                             startPoint:.topLeading,endPoint:.bottomTrailing)))
+            .shadow(color:.black.opacity(0.24),radius:12,y:5)
     }
 
     private func selectMode(_ value:Int) {
@@ -1269,7 +1799,7 @@ struct JarvisHUDHome: View {
             let pending = transcript
             let job = DispatchWorkItem { _ = handleCaptionWakePhrase(pending,isFinal:true) }
             captionWakeWork = job
-            DispatchQueue.main.asyncAfter(deadline:.now()+0.85,execute:job)
+            DispatchQueue.main.asyncAfter(deadline:.now()+(patientTurnTaking ? 1.85 : 0.85),execute:job)
             return true
         }
         captionWakeWork = nil
@@ -1297,11 +1827,67 @@ struct JarvisHUDHome: View {
                                       wakeAlreadyVerified:Bool = false,
                                       allowMusic:Bool = true,
                                       allowSystem:Bool = true) -> Bool {
-        if false, let (kind,title,seconds) = JarvisSmartTasks.parse(speech) {
-            smartTasks.add(title:title,kind:kind,after:seconds)
-            lastVoiceHUDCommand = "PINNED " + kind.uppercased()
-            drawHUD()
-            return true
+        let command = speech.lowercased()
+            .replacingOccurrences(of:"hey jarvis",with:"")
+            .replacingOccurrences(of:"jarvis",with:"")
+            .trimmingCharacters(in:.whitespacesAndNewlines.union(.punctuationCharacters))
+        if allowSystem && (wakeAlreadyVerified || speech.lowercased().contains("jarvis")) {
+            if ["set ","start ","make ","remind me", "create "].contains(where:command.hasPrefix),
+               let (kind,title,seconds) = JarvisSmartTasks.parse("hey jarvis " + command) {
+                let when = Date().addingTimeInterval(seconds)
+                switch kind {
+                case "reminder":
+                    Task {
+                        await productivity.createAppleReminder(title:title,at:when)
+                        announceVoiceAction(productivity.status)
+                    }
+                case "alarm":
+                    Task {
+                        await productivity.createSystemAlarm(title:title,at:when)
+                        announceVoiceAction(productivity.status)
+                    }
+                default:
+                    smartTasks.add(title:title,kind:"timer",after:seconds)
+                    let duration = seconds < 60 ? "\(Int(seconds)) seconds" :
+                                   "\(Int(seconds / 60)) minutes"
+                    announceVoiceAction("Timer set for \(duration)")
+                }
+                showProductivityTools = true
+                return true
+            }
+            if let range = command.range(of:#"^(?:take a note|write down|save a note|note that)\s+"#,
+                                         options:.regularExpression) {
+                let note = String(command[range.upperBound...])
+                if !note.isEmpty {
+                    productivity.addNote(note)
+                    announceVoiceAction("I saved your note on this iPhone.")
+                    showProductivityTools = true
+                    return true
+                }
+            }
+            if command.hasPrefix("check traffic") || command.hasPrefix("traffic near me") {
+                showSafetyTools = true
+                let area = safetyArea.isEmpty ? weatherGuardian.nearbyCity : safetyArea
+                Task {
+                    await areaIntelligence.scanTrafficNews(area:area)
+                    announceVoiceAction(areaIntelligence.status)
+                }
+                return true
+            }
+            if command.hasPrefix("research ") || command.hasPrefix("look up ") {
+                let topic = command.hasPrefix("research ") ? String(command.dropFirst(9)) :
+                            String(command.dropFirst(8))
+                researchTopic = topic
+                showResearchTools = true
+                Task {
+                    await researchIntelligence.research(topic)
+                    let summary = researchIntelligence.researchSummary
+                    let spoken = summary.isEmpty ? researchIntelligence.status :
+                        "I found this overview: " + String(summary.prefix(370))
+                    announceVoiceAction(spoken)
+                }
+                return true
+            }
         }
         if allowSystem, let action = JarvisSystemVoice.parse(
             speech,wakeAlreadyVerified:wakeAlreadyVerified) {
@@ -1337,6 +1923,14 @@ struct JarvisHUDHome: View {
         if mode != chosen.0 { handsFree.setMode(chosen.0,force:true) }
         lastVoiceHUDCommand = "VOICE → " + names[chosen.0]
         return true
+    }
+
+    private func announceVoiceAction(_ message:String) {
+        lastVoiceHUDCommand = String(message.prefix(100))
+        answer = message
+        if mode == 2 { captions.stop(); jarvisSpeaking = true }
+        phone.speakExternalReply(message,companion:true)
+        drawHUD()
     }
 
     private func pauseCaptionsAndTranslation() {

@@ -28,6 +28,8 @@ jobs:
           "$RUNNER_TEMP/jarvis-wake-test"
           swiftc Sources/JarvisSpeechEndpoint.swift Tests/JarvisSpeechEndpointSmoke.swift -o "$RUNNER_TEMP/jarvis-endpoint-test"
           "$RUNNER_TEMP/jarvis-endpoint-test"
+          swiftc Sources/JarvisSpeechPerformance.swift Tests/JarvisSpeechPerformanceSmoke.swift -o "$RUNNER_TEMP/jarvis-performance-test"
+          "$RUNNER_TEMP/jarvis-performance-test"
           swiftc Sources/JarvisMusicCommands.swift Tests/MusicCommandSmoke.swift -o "$RUNNER_TEMP/jarvis-music-test"
           "$RUNNER_TEMP/jarvis-music-test"
           swiftc Sources/JarvisLiveClock.swift Tests/LiveClockSmoke.swift -o "$RUNNER_TEMP/jarvis-clock-test"
@@ -38,7 +40,7 @@ jobs:
         working-directory: SolosDirectiOS
         run: |
           set -euo pipefail
-          xcodebuild -project SolosDirect.xcodeproj -scheme SolosDirect -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/jarvis-build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CURRENT_PROJECT_VERSION=30 build
+          xcodebuild -project SolosDirect.xcodeproj -scheme SolosDirect -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/jarvis-build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CURRENT_PROJECT_VERSION=31 build
       - name: Package unsigned IPA
         run: |
           set -euo pipefail

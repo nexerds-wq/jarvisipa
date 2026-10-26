@@ -11,6 +11,7 @@ import Combine
     @Published private(set) var status = "Waiting for location permission"
     @Published private(set) var temperature: String = "—"
     @Published private(set) var locationReady = false
+    @Published private(set) var nearbyCity = ""
     @Published private(set) var lastChecked: Date?
     private let location = CLLocationManager()
     private var timer: Timer?
@@ -18,6 +19,8 @@ import Combine
     private var delivered = Set<String>()
     private var activeUntil = Date.distantPast
     private var lastCoordinates: CLLocationCoordinate2D?
+    private let geocoder = CLGeocoder()
+    private var lastGeocodedAt = Date.distantPast
 
     override init() {
         super.init()
@@ -50,6 +53,18 @@ import Combine
     func locationManager(_ manager:CLLocationManager,didUpdateLocations locations:[CLLocation]) {
         guard let coordinate = locations.last?.coordinate else { return }
         lastCoordinates = coordinate
+        if Date().timeIntervalSince(lastGeocodedAt) > 900 {
+            lastGeocodedAt = Date()
+            geocoder.reverseGeocodeLocation(CLLocation(latitude:coordinate.latitude,
+                                                       longitude:coordinate.longitude)) { [weak self] places,_ in
+                Task { @MainActor in
+                    guard let place = places?.first else { return }
+                    let city = place.locality ?? place.subAdministrativeArea ?? ""
+                    let region = place.administrativeArea ?? ""
+                    self?.nearbyCity = [city,region].filter { !$0.isEmpty }.joined(separator:", ")
+                }
+            }
+        }
         Task { await check(coordinate) }
     }
     func locationManager(_ manager:CLLocationManager,didFailWithError error:Error) {
