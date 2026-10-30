@@ -3,6 +3,10 @@ options:
   bundleIdPrefix: com.nexer
   deploymentTarget:
     iOS: "26.0"
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    from: 0.17.7
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -24,5 +28,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
+    dependencies:
+      - package: FluidAudio
     scheme:
       gatherCoverageData: false
