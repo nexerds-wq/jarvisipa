@@ -4,6 +4,7 @@ import UserNotifications
 import HealthKit
 import Combine
 import Contacts
+import UniformTypeIdentifiers
 
 /// HUD-first controller. The iPhone is a remote and a live preview; the
 /// glasses receive identical 428x240 image frames only if iOS exposes an
@@ -130,6 +131,10 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisMicrophoneSource") private var microphoneSource = "iphone"
     @AppStorage("jarvisSpeakAnswers") private var speakReplies = true
     @AppStorage("jarvisVoiceIdentifier") private var jarvisVoiceIdentifier = "automatic"
+    @AppStorage("jarvisUseClonedVoice") private var jarvisUseClonedVoice = false
+    @AppStorage("jarvisClonedVoiceSpeed") private var clonedVoiceSpeed = 1.15
+    @State private var importingVoice = false
+    @State private var voiceImportStatus = ""
     @AppStorage("jarvisVoiceStyle") private var jarvisVoiceStyle = "natural"
     @AppStorage("jarvisVoiceRate") private var jarvisVoiceRate = 0.50
     @AppStorage("jarvisExpressiveSpeech") private var expressiveSpeech = true
@@ -1660,6 +1665,27 @@ struct JarvisHUDHome: View {
         VStack(alignment:.leading,spacing:9) {
             Label("NATURAL JARVIS VOICE • FREE",systemImage:"waveform")
                 .font(.caption.bold()).foregroundStyle(.orange)
+            Toggle("Use my Jarvis cloned voice • offline",isOn:$jarvisUseClonedVoice)
+                .disabled(!accessory.clonedVoiceReady)
+            if accessory.clonedVoiceReady {
+                HStack {
+                    Text("Cloned voice speed")
+                    Spacer()
+                    Text(String(format:"%.2fx",clonedVoiceSpeed))
+                        .foregroundStyle(.secondary)
+                }.font(.caption)
+                Slider(value:$clonedVoiceSpeed,in:0.90...1.50,step:0.05)
+            }
+            Button(accessory.clonedVoiceReady ? "REPLACE VOICE SAMPLE" : "IMPORT JARVIS REF_AUDIO.WAV") {
+                importingVoice = true
+            }.buttonStyle(.borderedProminent).tint(.orange)
+            Text(accessory.clonedVoiceReady
+                 ? "Voice sample saved privately on this iPhone. First playback downloads PocketTTS models; later speech runs without your PC or internet."
+                 : "Import ref_audio.wav from Files first. Your sample stays private on this iPhone.")
+                .font(.caption2).foregroundStyle(.secondary)
+            if !voiceImportStatus.isEmpty {
+                Text(voiceImportStatus).font(.caption2).foregroundStyle(.orange)
+            }
             Picker("Voice",selection:$jarvisVoiceIdentifier) {
                 Text("Automatic • best installed voice").tag("automatic")
                 ForEach(accessory.englishVoiceOptions) { option in
@@ -1689,6 +1715,16 @@ struct JarvisHUDHome: View {
         }
         .padding(10)
         .background(.orange.opacity(0.06),in:RoundedRectangle(cornerRadius:10))
+        .fileImporter(isPresented:$importingVoice,allowedContentTypes:[.wav]) { selection in
+            do {
+                let url = try selection.get()
+                try accessory.importClonedVoice(from:url)
+                jarvisUseClonedVoice = true
+                voiceImportStatus = "Jarvis sample imported! Tap PREVIEW JARVIS VOICE to set up and hear it."
+            } catch {
+                voiceImportStatus = "Import failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func section<Content: View>(_ title:String, @ViewBuilder content:()->Content) -> some View {

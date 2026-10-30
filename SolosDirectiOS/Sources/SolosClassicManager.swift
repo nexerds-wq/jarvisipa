@@ -36,6 +36,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     @Published private(set) var incomingSample = "No accessory messages received"
     private let accessoryManager = EAAccessoryManager.shared()
     private let speaker = AVSpeechSynthesizer()
+    private let clonedVoice = JarvisPocketVoice()
     private var activeUtterance: AVSpeechUtterance?
     private var remainingSpeechBeats: [AVSpeechUtterance] = []
     private var session: EASession?
@@ -280,7 +281,13 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         }
     }
 
-    var isSpeaking: Bool { speaker.isSpeaking }
+    var isSpeaking: Bool { speaker.isSpeaking || clonedVoice.isBusy }
+
+    var clonedVoiceReady: Bool { JarvisPocketVoice.hasReference }
+
+    func importClonedVoice(from url: URL) throws {
+        try clonedVoice.importWAV(from:url)
+    }
 
     // All choices are voices already available to iOS. There are no accounts,
     // API keys, online TTS requests, or paid services in this voice path.
@@ -294,6 +301,9 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     }
 
     var selectedVoiceLabel: String {
+        if UserDefaults.standard.bool(forKey:"jarvisUseClonedVoice") && clonedVoiceReady {
+            return "Jarvis cloned voice • PocketTTS"
+        }
         guard let voice = selectedVoice() else { return "System voice" }
         let quality = voice.quality == .premium ? "Premium" :
                       voice.quality == .enhanced ? "Enhanced" : "Standard"
@@ -361,6 +371,8 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     }
 
     func stopSpeaking() {
+        clonedVoice.stop()
+        speechIsActive = false
         remainingSpeechBeats.removeAll()
         if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
     }
@@ -372,6 +384,30 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
     }
 
     private func speakExpressively(_ text:String) {
+        if UserDefaults.standard.bool(forKey:"jarvisUseClonedVoice") && clonedVoiceReady {
+            clonedVoice.stop()
+            if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
+            remainingSpeechBeats.removeAll()
+            activeUtterance = nil
+            configureSpeechAudio()
+            speechIsActive = true
+            status = "Preparing offline Jarvis voice (first use downloads the model)"
+            clonedVoice.speak(text, onStart: { [weak self] in
+                guard let self else { return }
+                self.status = "Jarvis cloned voice speaking via \(self.audioRoute)"
+            }, onFinish: { [weak self] in
+                guard let self else { return }
+                self.speechIsActive = false
+                self.onSpeechCompleted?()
+                self.onHUDSpeechCompleted?()
+            }, onFailure: { [weak self] error in
+                guard let self else { return }
+                self.speechIsActive = false
+                self.status = "Voice clone unavailable: \(error.localizedDescription). Using iPhone voice."
+                self.beginSpeech(self.expressiveUtterances(text),quality:"system fallback")
+            })
+            return
+        }
         let utterances = expressiveUtterances(text)
         guard let first = utterances.first else { return }
         let quality = first.voice?.quality == .premium ? "premium" :
@@ -381,17 +417,7 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
 
     private func beginSpeech(_ utterances: [AVSpeechUtterance], quality: String) {
         guard let first = utterances.first else { return }
-        // Do not switch to an HFP call route for replies: it can make Bluetooth
-        // audio silent or low quality. The microphone is paused by the caller.
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback,mode:.spokenAudio,
-                                    options:[.mixWithOthers,.allowBluetoothA2DP])
-            try session.setActive(true)
-        } catch {
-            status = "Jarvis audio setup failed: \(error.localizedDescription)"
-            // Try system speech anyway: an existing output route may still work.
-        }
+        configureSpeechAudio()
         remainingSpeechBeats.removeAll()
         if speaker.isSpeaking { speaker.stopSpeaking(at:.immediate) }
         remainingSpeechBeats = Array(utterances.dropFirst())
@@ -399,6 +425,18 @@ final class SolosClassicManager: NSObject, ObservableObject, StreamDelegate, AVS
         speechIsActive = false
         speaker.speak(first)
         status = "Jarvis voice queued via \(audioRoute) (\(first.voice?.name ?? "system voice"), \(quality), \(utterances.count) speech beats)"
+    }
+
+    private func configureSpeechAudio() {
+        // Do not switch to HFP call audio: it can sound silent or low-quality.
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback,mode:.spokenAudio,
+                                    options:[.mixWithOthers,.allowBluetoothA2DP])
+            try session.setActive(true)
+        } catch {
+            status = "Jarvis audio setup failed: \(error.localizedDescription)"
+        }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
