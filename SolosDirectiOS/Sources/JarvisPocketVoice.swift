@@ -3,7 +3,6 @@ import AVFoundation
 import FluidAudio
 
 /// On-device PocketTTS player. Reference samples stay inside the iPhone app.
-@MainActor
 final class JarvisPocketVoice: NSObject, AVAudioPlayerDelegate {
     private let model = PocketTtsManager(language: .english)
     private var voiceData: PocketTtsVoiceData?
@@ -60,7 +59,7 @@ final class JarvisPocketVoice: NSObject, AVAudioPlayerDelegate {
         isBusy = true
         finished = onFinish
         failed = onFailure
-        generationTask = Task { [weak self] in
+        generationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 try await model.initialize()
