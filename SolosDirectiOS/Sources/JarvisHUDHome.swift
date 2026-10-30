@@ -132,6 +132,7 @@ struct JarvisHUDHome: View {
     @AppStorage("jarvisSpeakAnswers") private var speakReplies = true
     @AppStorage("jarvisVoiceIdentifier") private var jarvisVoiceIdentifier = "automatic"
     @AppStorage("jarvisUseClonedVoice") private var jarvisUseClonedVoice = false
+    @AppStorage("jarvisClonedVoiceSpeed") private var clonedVoiceSpeed = 1.15
     @State private var importingVoice = false
     @State private var voiceImportStatus = ""
     @AppStorage("jarvisVoiceStyle") private var jarvisVoiceStyle = "natural"
@@ -1666,6 +1667,15 @@ struct JarvisHUDHome: View {
                 .font(.caption.bold()).foregroundStyle(.orange)
             Toggle("Use my Jarvis cloned voice • offline",isOn:$jarvisUseClonedVoice)
                 .disabled(!accessory.clonedVoiceReady)
+            if accessory.clonedVoiceReady {
+                HStack {
+                    Text("Cloned voice speed")
+                    Spacer()
+                    Text(String(format:"%.2fx",clonedVoiceSpeed))
+                        .foregroundStyle(.secondary)
+                }.font(.caption)
+                Slider(value:$clonedVoiceSpeed,in:0.90...1.50,step:0.05)
+            }
             Button(accessory.clonedVoiceReady ? "REPLACE VOICE SAMPLE" : "IMPORT JARVIS REF_AUDIO.WAV") {
                 importingVoice = true
             }.buttonStyle(.borderedProminent).tint(.orange)
