@@ -2,13 +2,23 @@ import Foundation
 import AVFoundation
 import FluidAudio
 
-/// On-device PocketTTS player. Reference samples stay inside the iPhone app.
-final class JarvisPocketVoice: NSObject, AVAudioPlayerDelegate {
+/// Private offline voice playback using streamed 24 kHz PocketTTS frames.
+/// A new reply can start playing before the model finishes generating the text.
+final class JarvisPocketVoice {
     private let model = PocketTtsManager(language: .english)
     private var voiceData: PocketTtsVoiceData?
-    private var player: AVAudioPlayer?
+    private let audioEngine = AVAudioEngine()
+    private let audioPlayer = AVAudioPlayerNode()
+    private let timePitch = AVAudioUnitTimePitch()
+    private let outputFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000,
+                                             channels: 1)!
+    private var audioPrepared = false
+    private var isPlaying = false
     private var generationTask: Task<Void, Never>?
     private var requestID = 0
+    private var scheduledFrames = 0
+    private var completedFrames = 0
+    private var allFramesGenerated = false
     private var finished: (() -> Void)?
     private var failed: ((Error) -> Void)?
     private(set) var isBusy = false
@@ -23,7 +33,7 @@ final class JarvisPocketVoice: NSObject, AVAudioPlayerDelegate {
         FileManager.default.fileExists(atPath: referenceURL.path)
     }
 
-    /// Import the WAV securely from Files. Never publish voice recordings to GitHub.
+    /// Import a personally authorized reference recording through Files.
     func importWAV(from source: URL) throws {
         guard source.pathExtension.lowercased() == "wav" else {
             throw NSError(domain:"JarvisPocketVoice", code:1, userInfo:[
@@ -54,7 +64,6 @@ final class JarvisPocketVoice: NSObject, AVAudioPlayerDelegate {
                onFinish: @escaping () -> Void,
                onFailure: @escaping (Error) -> Void) {
         stop()
-        requestID += 1
         let current = requestID
         isBusy = true
         finished = onFinish
@@ -73,60 +82,99 @@ final class JarvisPocketVoice: NSObject, AVAudioPlayerDelegate {
                     voiceData = cloned
                     voice = cloned
                 }
-                let output = try await model.synthesize(text:text, voiceData:voice)
+
+                // Stream 80 ms frames directly to AVAudioEngine. Keep the
+                // PocketTTS model and cloned conditioning data loaded between replies.
+                let stream = try await model.synthesizeStreaming(text:text,voiceData:voice)
                 guard !Task.isCancelled, current == requestID else { return }
-                let audioPlayer = try AVAudioPlayer(data:output)
-                audioPlayer.delegate = self
-                guard audioPlayer.prepareToPlay(), audioPlayer.play() else {
+                try prepareAudio()
+                for try await frame in stream {
+                    guard !Task.isCancelled, current == requestID else { return }
+                    try schedule(frame.samples, request:current)
+                    if !isPlaying {
+                        audioPlayer.play()
+                        isPlaying = true
+                        onStart()
+                    }
+                }
+                guard !Task.isCancelled, current == requestID else { return }
+                allFramesGenerated = true
+                guard scheduledFrames > 0 else {
                     throw NSError(domain:"JarvisPocketVoice",code:3,userInfo:[
-                        NSLocalizedDescriptionKey:"Could not play the cloned speech."
+                        NSLocalizedDescriptionKey:"The voice model generated no audio."
                     ])
                 }
-                player = audioPlayer
-                onStart()
+                completeIfPlayed(request:current)
             } catch {
                 guard !Task.isCancelled, current == requestID else { return }
-                isBusy = false
-                player = nil
                 let callback = failed
-                finished = nil
-                failed = nil
+                stop()
                 callback?(error)
             }
         }
+    }
+
+    private func prepareAudio() throws {
+        if !audioPrepared {
+            audioEngine.attach(audioPlayer)
+            audioEngine.attach(timePitch)
+            audioEngine.connect(audioPlayer,to:timePitch,format:outputFormat)
+            audioEngine.connect(timePitch,to:audioEngine.mainMixerNode,
+                                format:outputFormat)
+            audioEngine.prepare()
+            audioPrepared = true
+        }
+        let storedSpeed = UserDefaults.standard.object(forKey:"jarvisClonedVoiceSpeed") as? Double
+        timePitch.rate = Float(min(1.50,max(0.85,storedSpeed ?? 1.15)))
+        if !audioEngine.isRunning {
+            try audioEngine.start()
+        }
+    }
+
+    private func schedule(_ samples:[Float], request:Int) throws {
+        guard !samples.isEmpty else { return }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat:outputFormat,
+                                            frameCapacity:AVAudioFrameCount(samples.count)),
+              let destination = buffer.floatChannelData?[0] else {
+            throw NSError(domain:"JarvisPocketVoice",code:4,userInfo:[
+                NSLocalizedDescriptionKey:"Unable to create the speech audio buffer."
+            ])
+        }
+        samples.withUnsafeBufferPointer { data in
+            if let base = data.baseAddress {
+                destination.update(from:base,count:samples.count)
+            }
+        }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        scheduledFrames += 1
+        audioPlayer.scheduleBuffer(buffer,completionCallbackType:.dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.requestID == request else { return }
+                self.completedFrames += 1
+                self.completeIfPlayed(request:request)
+            }
+        }
+    }
+
+    private func completeIfPlayed(request:Int) {
+        guard request == requestID,allFramesGenerated,
+              scheduledFrames > 0, completedFrames >= scheduledFrames else { return }
+        let callback = finished
+        stop()
+        callback?()
     }
 
     func stop() {
         requestID += 1
         generationTask?.cancel()
         generationTask = nil
-        player?.delegate = nil
-        player?.stop()
-        player = nil
+        audioPlayer.stop()
+        isPlaying = false
         isBusy = false
+        scheduledFrames = 0
+        completedFrames = 0
+        allFramesGenerated = false
         finished = nil
         failed = nil
-    }
-
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        guard self.player === player else { return }
-        self.player = nil
-        isBusy = false
-        let callback = finished
-        finished = nil
-        failed = nil
-        callback?()
-    }
-
-    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-        guard self.player === player else { return }
-        self.player = nil
-        isBusy = false
-        let callback = failed
-        finished = nil
-        failed = nil
-        callback?(error ?? NSError(domain:"JarvisPocketVoice",code:4,userInfo:[
-            NSLocalizedDescriptionKey:"Voice playback failed."
-        ]))
     }
 }
