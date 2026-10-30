@@ -16,6 +16,7 @@ struct JarvisHUDHome: View {
     @StateObject private var navigation = SolosNavigationEngine()
     @StateObject private var music = JarvisAppleMusic()
     @StateObject private var weatherGuardian = JarvisWeatherGuardian()
+    @StateObject private var earthquakeMonitor = JarvisEarthquakeMonitor()
     @StateObject private var smartTasks = JarvisSmartTasks()
     @StateObject private var productivity = JarvisProductivity()
     @StateObject private var areaIntelligence = JarvisAreaIntelligence()
@@ -24,6 +25,7 @@ struct JarvisHUDHome: View {
     @State private var smartTaskMinutes = 10
     @State private var smartTaskKind = "reminder"
     @State private var safetyArea = ""
+    @AppStorage("jarvisSafetyTravelMode") private var safetyTravelMode = false
     @State private var researchTopic = ""
     @State private var noteDraft = ""
     @State private var reminderDraft = ""
@@ -354,6 +356,8 @@ struct JarvisHUDHome: View {
                 consumeShortcutMessage()
                 try? await Task.sleep(for:.milliseconds(350))
                 weatherGuardian.start()
+                earthquakeMonitor.start()
+                if safetyTravelMode { earthquakeMonitor.setTravelMode(true) }
                 if companionEnabled && companionSoundCues { emotionCues.start() }
                 requestHeartRate()
                 if keepJarvisListening && scenePhase == .active { phone.startListening() }
@@ -367,6 +371,7 @@ struct JarvisHUDHome: View {
         .onChange(of:scenePhase) { _, phase in
             if phase == .active {
                 weatherGuardian.refresh()
+                earthquakeMonitor.refresh()
                 if (mode == 2 || mode == 3) && !captions.isListening {
                     startCaptioning()
                 } else if keepJarvisListening && mode != 2 && mode != 3 {
@@ -747,6 +752,23 @@ struct JarvisHUDHome: View {
                         .font(.caption.bold())
                         .foregroundStyle(weatherGuardian.banner.isEmpty ? JarvisTheme.muted : JarvisTheme.orange)
                     Text(weatherGuardian.status)
+                        .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                    Toggle("Travel location monitoring (requires Always permission)", isOn:$safetyTravelMode)
+                        .font(.caption)
+                        .onChange(of:safetyTravelMode) { _, enabled in earthquakeMonitor.setTravelMode(enabled) }
+                    Button("CHECK USGS EARTHQUAKES") { earthquakeMonitor.refresh() }
+                        .buttonStyle(JarvisActionStyle(prominent:false))
+                    Text(earthquakeMonitor.status)
+                        .font(.caption2).foregroundStyle(JarvisTheme.muted)
+                    ForEach(earthquakeMonitor.events.prefix(5)) { event in
+                        Link(destination:event.url) {
+                            Text("USGS M\(event.magnitude.formatted(.number.precision(.fractionLength(1)))) • \(Int(event.distanceKM)) km • \(event.title)")
+                                .font(.caption)
+                        }
+                    }
+                    Link("PUBLIC EMERGENCY RADIO DIRECTORY", destination: URL(string:"https://www.broadcastify.com/listen/")!)
+                        .font(.caption.bold())
+                    Text("Radio availability varies by area. Encrypted channels are not accessible. No reports does not mean an area is safe.")
                         .font(.caption2).foregroundStyle(JarvisTheme.muted)
                     TextField("City or area for traffic reports",text:$safetyArea)
                         .textFieldStyle(.roundedBorder)
