@@ -113,7 +113,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;margin-top:30px;font-si
 </head>
 <body>
 <div class="shell">
-<header class="header"><div class="brand">NEXER <em>COMMAND</em><small>HOME INTELLIGENCE · FIRE TV EDITION</small></div><div class="header-right"><span class="pulse"><span class="dot"></span> LIVE CONNECTIONS</span><span class="status" id="sync">Checking feeds...</span><button id="refresh" type="button">↻ Refresh</button></div></header>
+<header class="header"><div class="brand">NEXER <em>COMMAND 2.0</em><small>HOME INTELLIGENCE · FIRE TV EDITION · FIXED FEEDS</small></div><div class="header-right"><span class="pulse"><span class="dot"></span> LIVE CONNECTIONS</span><span class="status" id="sync">Checking feeds...</span><button id="refresh" type="button">↻ Refresh</button></div></header>
 <nav class="tabs" aria-label="Dashboard sections">
 <button class="tab active" data-view="home">◈ OVERVIEW</button><button class="tab" data-view="danger">⚠ DANGERS</button><button class="tab" data-view="news">◉ NEWS</button><button class="tab" data-view="money">＄ SAVE MONEY</button><button class="tab" data-view="markets">⌁ STOCKS</button><button class="tab" data-view="assistant">✦ ASSISTANT</button>
 </nav>
@@ -179,7 +179,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;margin-top:30px;font-si
  <div class="panel"><div class="panel-head"><h2>⌁ LONG-TERM STOCK RESEARCH RADAR</h2><span class="tag yellow">HISTORICAL DATA ONLY</span></div><p>Compare 1-year trends, 50/200-day moving averages, 3-month return and RSI. A <b>BUY WATCH</b> means the formula looks strong historically, not that you should buy. <b>SELL / AVOID</b> means the trend looks weak, not a guaranteed forecast. News and policy changes should be checked separately.</p><div class="marketgrid" id="stockGrid"></div><div class="row" style="margin-top:20px;flex-wrap:wrap"><div style="display:flex;gap:8px;flex:1;max-width:500px"><input id="stockInput" placeholder="Symbol e.g. AAPL" maxlength="10" aria-label="Stock ticker"><button id="addStock">Analyze</button></div><button id="reloadStocks">↻ Reload market data</button></div><p class="footnote" id="marketInfo">Live historical data uses an unofficial Yahoo Finance endpoint through third-party public CORS proxies, which may fail. No price or recommendation is shown if the data cannot be verified. Research only, not investment advice.</p></div>
  <div class="grid" style="margin-top:18px">
   <div class="panel span-6"><h2>🛢 ENERGY / OIL WATCH</h2><p>Watch companies such as XOM, CVX and OXY and compare them with oil prices, sanctions, production decisions and earnings. A political headline does not guarantee any stock rises.</p><a class="action-link" href="https://www.eia.gov/petroleum/" target="_blank" rel="noopener">U.S. oil data ↗</a><button class="action-link" data-news="oil">Oil policy headlines →</button></div>
-  <div class="panel span-6"><h2>📈 HOW THIS RATING IS MADE</h2><p>+1 price above 200-day average; +1 50-day above 200-day; +1 price higher than 3 months ago; +1 RSI 40–70; +1 positive 12-month performance. At least 200 real trading-day prices are required.</p><p class="footnote">Scores: 4–5 BUY WATCH, 2–3 HOLD / REVIEW, 0–1 SELL / AVOID. This simple model does not use valuation, balance sheets or future news and is not a tested profitable system.</p></div>
+  <div class="panel span-6"><h2>📈 HOW THIS RATING IS MADE</h2><p>+1 price above 200-day average; +1 50-day above 200-day; +1 price higher than 3 months ago; +1 RSI 40–70; +1 positive 12-month performance. At least 200 real trading-day prices are required.</p><p class="footnote">Scores: 4–5 BUY WATCH, 2–3 HOLD / REVIEW, 0–1 SELL / AVOID. This simple model does not use valuation, balance sheets or future news and is not a tested profitable system. Unofficial data can be blocked.</p></div>
  </div>
 </section>
 
@@ -227,7 +227,7 @@ async function loadWeather(){
  try{
  var url='https://api.open-meteo.com/v1/forecast?latitude='+cfg.lat+'&longitude='+cfg.lon+'&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code&hourly=precipitation_probability&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=4';
  var j=await fetchJSON(url,15000);if(!j.current)throw Error('No weather data');
- app.weather=j;var c=j.current;$('temp').textContent=Math.round(c.temperature_2m)+'°';$('condition').textContent=weatherName(c.weather_code);$('feels').textContent='Feels like '+Math.round(c.apparent_temperature)+'°F';$('humidity').textContent=c.relative_humidity_2m+'%';$('wind').textContent=Math.round(c.wind_speed_10m)+' mph';$('rain').textContent=((j.daily&&j.daily.precipitation_probability_max||[])[0]??'--')+'%';
+ app.weather=j;var c=j.current;$('temp').textContent=Math.round(c.temperature_2m)+'°';$('condition').textContent=weatherName(c.weather_code);$('feels').textContent='Feels like '+Math.round(c.apparent_temperature)+'°F';$('humidity').textContent=c.relative_humidity_2m+'%';$('wind').textContent=Math.round(c.wind_speed_10m)+' mph';$('rain').textContent=(j.daily&&j.daily.precipitation_probability_max&&j.daily.precipitation_probability_max[0]!=null?j.daily.precipitation_probability_max[0]:'--')+'%';
  $('weatherUpdated').textContent='Updated '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
  var f=$('forecast');f.replaceChildren();if(j.daily)j.daily.time.forEach(function(day,i){var d=node('div');d.appendChild(node('div','',new Date(day+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'})));d.appendChild(node('strong','',Math.round(j.daily.temperature_2m_max[i])+'°'));d.appendChild(node('small','',Math.round(j.daily.temperature_2m_min[i])+'° low'));f.appendChild(d);});
  }catch(e){$('condition').textContent='Weather unavailable';$('weatherUpdated').textContent='Connection failed';$('forecast').textContent='Live weather feed could not load. Check your internet connection.';}
@@ -259,7 +259,31 @@ async function loadQuakes(){
  var box=$('quakeList');box.replaceChildren();if(!a.length)box.textContent='No earthquakes over magnitude 4.5 in this feed.';a.forEach(function(x){var p=x.properties;var d=node('div','line-item');var aLink=link(p.url||'https://earthquake.usgs.gov/','M'+Number(p.mag).toFixed(1)+' · '+safe(p.place));aLink.style.fontWeight='800';d.appendChild(aLink);d.appendChild(node('small','',new Date(p.time).toLocaleString()));box.appendChild(d);});
  }catch(e){$('quakeDesc').textContent='USGS feed unavailable';$('quakeList').textContent='Earthquake data unavailable right now.';}
 }
-async function getRSS(url){var prox='https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(url);var j=await fetchJSON(prox,12000);if(j.status!=='ok'||!Array.isArray(j.items))throw Error('RSS feed unavailable');return j.items;}
+async function getRSS(url){
+ var urls=[url,'https://proxy.cors.dev/'+url],last;
+ for(var k=0;k<urls.length;k++){
+  try{
+   var controller=typeof AbortController!=='undefined'?new AbortController():null;
+   var timer=controller?setTimeout(function(){controller.abort();},9500):null;
+   var response=await fetch(urls[k],controller?{signal:controller.signal}:{});
+   if(timer)clearTimeout(timer);
+   if(!response.ok)throw Error('RSS HTTP '+response.status);
+   var doc=new DOMParser().parseFromString(await response.text(),'text/xml');
+   if(doc.getElementsByTagName('parsererror').length)throw Error('Invalid feed XML');
+   var nodes=doc.querySelectorAll('item, entry'),items=[];
+   for(var i=0;i<nodes.length&&i<75;i++){
+    var x=nodes[i],t=x.querySelector('title'),l=x.querySelector('link'),d=x.querySelector('pubDate, published, updated'),a=x.querySelector('author, creator');
+    var u=l?(l.getAttribute('href')||l.textContent.trim()):'';
+    if(!t||!u||!/^https:\/\//.test(u))continue;
+    items.push({title:t.textContent.trim(),link:u,pubDate:d?d.textContent.trim():'',author:a?a.textContent.trim():'Publisher'});
+   }
+   if(items.length)return items;
+   throw Error('No feed items');
+  }catch(e){last=e;}
+ }
+ try{var j=await fetchJSON('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(url),8000);if(j.status==='ok'&&Array.isArray(j.items)&&j.items.length)return j.items;}catch(e){}
+ throw last||Error('RSS unavailable');
+}
 async function loadStorm(){
  try{var list=await getRSS('https://www.nhc.noaa.gov/index-at.xml');var latest=list.filter(function(x){return x.title&&!/image|graphic/i.test(x.title);}).slice(0,3);if(!latest.length)throw Error('No advisories in RSS');app.storm=latest;
  $('stormTitle').textContent=safe(latest[0].title).slice(0,65);$('stormDesc').textContent='Latest NOAA/NHC RSS item';$('stormDetail').textContent=safe(latest[0].title);$('stormSub').textContent=safe(latest[0].description).slice(0,380);
@@ -268,11 +292,48 @@ async function loadStorm(){
 async function loadSpace(){try{var data=await fetchJSON('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json',12000);var recent=data[data.length-1];if(!recent)throw Error('No data');$('solarStatus').textContent='Planetary K-index: '+recent[1];}catch(e){$('solarStatus').textContent='Live space weather unavailable';}}
 function normalizeGDELT(j){return (j.articles||[]).slice(0,12).map(function(x){var t=x.seendate||'';var date=/^\d{8}T\d{6}Z/.test(t)?new Date(t.substring(0,4)+'-'+t.substring(4,6)+'-'+t.substring(6,8)+'T'+t.substring(9,11)+':'+t.substring(11,13)+':00Z'):null;return {title:x.title,url:x.url,source:x.domain||'Publisher',date:date,summary:''};});}
 function normalizeRSS(j){return j.slice(0,12).map(function(x){return {title:x.title,url:x.link,source:x.author||'News publisher',date:x.pubDate?new Date(x.pubDate):null,summary:''};});}
+var publisherFeeds={
+ world:['https://rss.dw.com/xml/rss-en-all','https://feeds.bbci.co.uk/news/world/rss.xml'],
+ oil:['https://feeds.bbci.co.uk/news/business/rss.xml','https://rss.dw.com/xml/rss-en-all'],
+ economy:['https://feeds.bbci.co.uk/news/business/rss.xml','https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml'],
+ tax:['https://feeds.bbci.co.uk/news/business/rss.xml','https://rss.dw.com/xml/rss-en-all'],
+ health:['https://rss.nytimes.com/services/xml/rss/nyt/Health.xml','https://feeds.bbci.co.uk/news/health/rss.xml'],
+ danger:['https://rss.dw.com/xml/rss-en-all','https://feeds.bbci.co.uk/news/world/rss.xml'],
+ tech:['https://feeds.bbci.co.uk/news/technology/rss.xml','https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml'],
+ subscription:['https://feeds.bbci.co.uk/news/technology/rss.xml','https://rss.dw.com/xml/rss-en-all'],
+ market:['https://feeds.bbci.co.uk/news/business/rss.xml','https://rss.nytimes.com/services/xml/rss/nyt/Business.xml']
+};
+var topicKeywords={
+ oil:/oil|petroleum|energy|opec|gasoline|gas prices|sanction|drilling|trump/i,
+ economy:/inflation|rate|economy|economic|employment|jobs|federal reserve|prices|consumer|tariff|recession/i,
+ tax:/tax|irs|rebate|benefit|social security|medicaid|budget|credit|refund|subsid/i,
+ health:/virus|disease|health|cdc|outbreak|flu|covid|measles|vaccine|infect|pandemic/i,
+ danger:/hurricane|storm|tornado|tsunami|earthquake|disaster|flood|war|danger|emergency/i,
+ tech:/ai|artificial intelligence|technology|robot|chip|openai|google|microsoft|apple|nvidia/i,
+ subscription:/stream|netflix|amazon|disney|hulu|subscri|peacock|internet|price|cord.cut/i,
+ market:/stock|market|earnings|shares|company|invest|wall street|nasdaq|dow|business|trade/i
+};
 async function getNews(key){
- var t=topics[key],p='https://api.gdeltproject.org/api/v2/doc/doc?query='+encodeURIComponent(t.q)+'&mode=artlist&maxrecords=12&format=json&timespan=3d&sort=datedesc';
- try{var j=await fetchJSON(p,11500);var a=normalizeGDELT(j);if(a.length)return a;}catch(e){}
- try{var rss='https://news.google.com/rss/search?q='+encodeURIComponent(t.rss+' when:3d')+'&hl=en-US&gl=US&ceid=US:en';var r=await getRSS(rss);var b=normalizeRSS(r);if(b.length)return b;}catch(e){}
- throw Error('Both news sources unavailable');
+ var t=topics[key];if(!t)throw Error('Unknown topic');
+ var feeds=publisherFeeds[key]||publisherFeeds.world;
+ if(key!=='world'&&key!=='economy'&&key!=='tech'&&key!=='market'&&key!=='health'){
+  try{
+   var p='https://api.gdeltproject.org/api/v2/doc/doc?query='+encodeURIComponent(t.q)+'&mode=artlist&maxrecords=12&format=json&timespan=3d&sort=datedesc';
+   var j=await fetchJSON(p,5000);var gd=normalizeGDELT(j);
+   if(gd.length)return gd;
+  }catch(e){}
+ }
+ for(var i=0;i<feeds.length;i++){
+  try{
+   var list=normalizeRSS(await getRSS(feeds[i]));
+   var reg=topicKeywords[key];
+   if(reg)list=list.filter(function(x){return reg.test(x.title);});
+   if(list.length)return list.slice(0,12);
+  }catch(e){}
+ }
+ try{var url='https://news.google.com/rss/search?q='+encodeURIComponent(t.rss+' when:7d')+'&hl=en-US&gl=US&ceid=US:en';
+ var items=normalizeRSS(await getRSS(url));if(items.length)return items;}catch(e){}
+ throw Error('News feeds unavailable; use the search link');
 }
 function renderNews(target,articles,limit){target.replaceChildren();if(!articles||!articles.length){target.textContent='No recent stories received.';return;}articles.slice(0,limit||10).forEach(function(o){var box=node('article','newsrow'),a=link(o.url,'');a.appendChild(node('strong','',safe(o.title)));box.appendChild(a);box.appendChild(node('small','',(safe(o.source)||'News source')+' · '+(o.date&&!isNaN(o.date)?o.date.toLocaleString():'Date not supplied')));target.appendChild(box);});}
 async function loadNews(key){
@@ -302,7 +363,7 @@ function rating(prices){
 }
 async function getStock(symbol){
  var origin='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(symbol)+'?range=1y&interval=1d';
- var proxies=['https://corsproxy.io/?url='+encodeURIComponent(origin),'https://api.allorigins.win/raw?url='+encodeURIComponent(origin)];
+ var proxies=['https://proxy.cors.dev/'+origin,'https://corsproxy.io/?url='+encodeURIComponent(origin),'https://api.allorigins.win/raw?url='+encodeURIComponent(origin)];
  var last;for(var k=0;k<proxies.length;k++){try{var j=await fetchJSON(proxies[k],11000),r=j.chart&&j.chart.result&&j.chart.result[0];if(!r)throw Error('Missing chart');
  var closes=r.indicators.quote[0].close.filter(function(v){return typeof v==='number'&&isFinite(v);});
  if(closes.length<201)throw Error('Less than 200 daily closes');return rating(closes);
@@ -337,7 +398,7 @@ $('disconnectAI').addEventListener('click',function(){app.ai=null;$('aiKey').val
 async function sendChat(){var msg=$('ask').value.trim();if(!msg)return;$('ask').value='';addChat('you',msg);if(!app.ai){addChat('bot',answerLocal(msg));return;}
  $('aiState').textContent='AI THINKING...';
  try{var api=app.ai;var context='You are NEXER, a concise useful TV home dashboard assistant. Current location is '+cfg.place+'. Weather: '+(app.weather?JSON.stringify(app.weather.current):'unavailable')+'. NWS alerts: '+(app.alerts===null?'unavailable':app.alerts.length+' returned')+'. Money estimate: '+$('saveMonth').textContent+'/mo illustrative only. Stock ratings: '+Object.keys(app.stocks).filter(function(s){return app.stocks[s];}).map(function(s){return s+' '+app.stocks[s].signal+' '+app.stocks[s].score+'/5'}).join(', ')+'. Explain uncertainty. Never invent alerts, current news, prices, or financial recommendations. Avoid unnecessary length.';
- var response=await fetch(api.url+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+api.key},body:JSON.stringify({model:api.model,messages:[{role:'system',content:context},{role:'user',content:msg}],temperature:0.4})});
+ var response=await fetch((/\/chat\/completions$/.test(api.url)?api.url:api.url+'/chat/completions'),{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+api.key},body:JSON.stringify({model:api.model,messages:[{role:'system',content:context},{role:'user',content:msg}],temperature:0.4})});
  if(!response.ok)throw Error('API returned '+response.status);var data=await response.json();var answer=data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content;if(typeof answer!=='string')throw Error('No text response');addChat('bot',answer);
  }catch(e){addChat('bot','The external AI connection failed: '+e.message+'. Check your URL, model, API key, provider billing and CORS settings.');}
  $('aiState').textContent='EXTERNAL AI SET';
@@ -348,7 +409,7 @@ var Recognizer=window.SpeechRecognition||window.webkitSpeechRecognition;
 if(!Recognizer){$('mic').disabled=true;$('mic').title='Speech recognition is not supported by this browser';}
 else $('mic').addEventListener('click',function(){try{var rec=new Recognizer();rec.lang='en-US';rec.interimResults=false;rec.onresult=function(e){$('ask').value=e.results[0][0].transcript;sendChat();};rec.onerror=function(e){addChat('bot','Microphone error: '+e.error+'. Try typing instead.');};rec.start();$('mic').textContent='Listening…';rec.onend=function(){$('mic').textContent='🎤 Talk';};}catch(e){addChat('bot','Microphone is not available here. Please type your question.');}});
 $('changePlace').addEventListener('click',async function(){var name=prompt('Enter a city name (example: Hialeah Gardens, FL). No street address needed.',cfg.place);if(!name||!name.trim())return;try{var j=await fetchJSON('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(name.trim())+'&count=5&language=en&format=json',12000);if(!j.results||!j.results.length)throw Error('No matching city found');var found=j.results[0];cfg={place:found.name+', '+(found.admin1||found.country_code),lat:found.latitude,lon:found.longitude};localStorage.setItem('nexer_place',JSON.stringify(cfg));updateClock();$('safetyText').textContent='Checking new location...';loadWeather();loadAir();loadAlerts();}catch(e){alert('Could not find this city. Try a shorter name.');}});
-function reload(){ $('sync').textContent='Refreshing sources...';Promise.allSettled([loadWeather(),loadAir(),loadAlerts(),loadQuakes(),loadStorm(),loadSpace(),loadHomeNews()]).then(function(){$('sync').textContent='Last checked '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});});}
+function reload(){ $('sync').textContent='Refreshing sources...';Promise.all([loadWeather(),loadAir(),loadAlerts(),loadQuakes(),loadStorm(),loadSpace(),loadHomeNews()].map(function(p){return Promise.resolve(p).catch(function(){return null;});})).then(function(){$('sync').textContent='Last checked '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});});}
 $('refresh').addEventListener('click',function(){reload();if($('view-news').classList.contains('active'))loadNews(app.topic);if($('view-markets').classList.contains('active'))loadStocks();});
 reload();setInterval(function(){loadWeather();loadAir();loadAlerts();},5*60*1000);setInterval(function(){loadQuakes();loadStorm();loadSpace();loadHomeNews();},15*60*1000);
 })();
