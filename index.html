@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#070d17">
+<title>NEXER | Home Command Center</title>
+<style>
+:root{--bg:#080e18;--bg2:#0c1521;--panel:#101b2a;--panel2:#142235;--line:#273a50;--txt:#ecf4ff;--muted:#9eb0c4;--cyan:#48d6e8;--green:#62e3b2;--gold:#f9ca78;--red:#ff777f;--blue:#8ab8ff}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(ellipse at 50% -15%,#152c43 0%,#080e18 49%,#070c14 100%);color:var(--txt);font:500 18px/1.45 Arial,Helvetica,sans-serif;min-height:100vh}
+button,input,select,textarea{font:inherit}
+a{color:inherit;text-decoration:none}
+button{cursor:pointer;border:1px solid var(--line);background:#182a3e;color:var(--txt);border-radius:12px;padding:13px 18px}
+button:hover,a:hover{filter:brightness(1.16)}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:4px solid var(--cyan);outline-offset:3px}
+input,select,textarea{border:1px solid #39546b;background:#0a1522;color:white;border-radius:11px;padding:13px;width:100%}
+textarea{resize:vertical}
+small,.muted{color:var(--muted)}
+.shell{width:min(1810px,100%);margin:auto;padding:26px 32px 50px}
+.header{display:flex;align-items:center;justify-content:space-between;gap:22px;padding-bottom:20px;border-bottom:1px solid var(--line)}
+.brand{font-size:24px;font-weight:900;letter-spacing:.11em}
+.brand em{font-style:normal;color:var(--cyan)}
+.brand small{display:block;font-size:12px;letter-spacing:.22em;font-weight:600;margin-top:2px}
+.header-right{display:flex;align-items:center;gap:22px;font-size:14px;color:var(--muted)}
+.pulse{display:inline-flex;align-items:center;gap:9px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 17px #62e3b2}
+.status{border:1px solid var(--line);border-radius:100px;padding:9px 13px}
+.tabs{display:flex;flex-wrap:wrap;gap:9px;margin:22px 0}
+.tab{flex:1;min-width:125px;font-size:16px;font-weight:800;letter-spacing:.02em;padding:15px 10px}
+.tab.active{background:#18435a;border-color:#41cddd;color:#e8feff;box-shadow:inset 0 -3px 0 #43d7e8}
+.hero{display:grid;grid-template-columns:1.4fr .8fr;gap:22px;align-items:stretch;margin-bottom:21px}
+.clockbox{min-height:185px;display:flex;flex-direction:column;justify-content:center}
+.kicker{font-size:13px;letter-spacing:.23em;color:var(--cyan);font-weight:900;text-transform:uppercase}
+.clock{font-size:clamp(63px,7.8vw,126px);font-weight:800;line-height:1;letter-spacing:-.065em;font-variant-numeric:tabular-nums;margin:9px 0}
+.dateline{font-size:23px;color:#b9cde2;font-weight:600}
+.heroaside{padding:27px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(145deg,#142c41,#0e1a2a)}
+.heroaside .loud{font-size:22px;font-weight:800;margin:12px 0 8px}
+.heroaside .sub{font-size:15px;color:var(--muted)}
+.tag{display:inline-flex;gap:6px;align-items:center;padding:5px 10px;border-radius:999px;background:#123345;color:var(--cyan);font-weight:800;font-size:12px;letter-spacing:.05em}
+.tag.green{background:#10372f;color:var(--green)}.tag.yellow{background:#44331b;color:var(--gold)}.tag.red{background:#4c2330;color:#ff999c}
+.alertbanner{background:#391a28;border:1px solid #c45567;color:#ffd9da;padding:14px 18px;border-radius:13px;margin-bottom:22px;font-weight:800;display:none}
+.alertbanner.show{display:block}
+.view{display:none}.view.active{display:block}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:18px}
+.panel{background:linear-gradient(155deg,var(--panel),#0c1725);border:1px solid var(--line);border-radius:20px;padding:24px;min-width:0}
+.span-3{grid-column:span 3}.span-4{grid-column:span 4}.span-5{grid-column:span 5}.span-6{grid-column:span 6}.span-7{grid-column:span 7}.span-8{grid-column:span 8}.span-12{grid-column:span 12}
+.panel-head{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:20px}
+.panel h2,.panel h3{margin:0;font-size:21px;letter-spacing:-.02em}
+.panel h3{font-size:18px}
+.panel p{margin:10px 0}
+.big{font-size:59px;font-weight:800;letter-spacing:-.05em;line-height:1}
+.weather-row{display:flex;align-items:center;gap:32px;flex-wrap:wrap}
+.weather-line{font-size:23px;font-weight:800}
+.statline{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:24px 0}
+.stat{background:#15273a;border:1px solid #22374c;border-radius:13px;padding:13px}
+.stat b{display:block;font-size:24px;margin-top:5px}
+.stat small{font-size:12px}
+.forecast{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.forecast>div{background:#0c2330;border-radius:10px;padding:12px;font-size:15px;text-align:center}
+.forecast strong{display:block;font-size:21px}
+.metric{font-size:38px;font-weight:900;letter-spacing:-.05em;margin:6px 0}
+.row{display:flex;align-items:center;justify-content:space-between;gap:13px}
+.stack{display:flex;flex-direction:column;gap:12px}
+.line-item{padding:12px 0;border-top:1px solid var(--line);font-size:15px}
+.line-item a,.link{color:#82dbea;text-decoration:underline;text-underline-offset:3px}
+.row.tiny{font-size:14px}
+.newsrow{display:block;padding:16px 0;border-top:1px solid #233448}
+.newsrow strong{display:block;font-size:17px;line-height:1.38}
+.newsrow small{display:block;margin-top:6px;font-size:13px}
+.newsrow p{font-size:14px;color:var(--muted);margin:7px 0 0}
+.buttons{display:flex;flex-wrap:wrap;gap:8px}
+.pill{padding:9px 12px;font-size:13px;font-weight:800}
+.pill.active{background:#1c4c60;border-color:#58d9e5}
+.headline{font-size:26px;font-weight:800;letter-spacing:-.03em;margin:13px 0}
+.footnote{font-size:12px;color:var(--muted);margin-top:12px}
+.action-link{display:inline-block;background:#183b4a;border:1px solid #2b6973;border-radius:10px;color:#b2f4f5;font-weight:800;padding:11px 14px;font-size:14px;margin-top:8px}
+.source-list{display:flex;flex-wrap:wrap;gap:8px}
+.source-list a{border:1px solid var(--line);padding:8px 11px;border-radius:9px;font-size:13px;color:var(--muted)}
+.quality{font-size:13px;color:var(--muted);padding:7px 10px;border:1px solid var(--line);border-radius:8px}
+.factor{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.factor label{display:block;font-size:14px;color:#b4c9dc;margin-bottom:6px}
+.factor .field{background:#0d1b2b;border-radius:13px;padding:12px;border:1px solid var(--line)}
+.factor input{font-size:21px;font-weight:800}
+.saving-total{color:var(--green);font-size:56px;font-weight:900;letter-spacing:-.04em;line-height:1}
+.tip{border-top:1px solid var(--line);padding:16px 0;font-size:15px}
+.tip b{display:block;font-size:17px;margin-bottom:4px}
+.marketgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.stock{border:1px solid #2b445d;background:#132337;border-radius:15px;padding:17px;text-align:left;min-height:190px}
+.stock .sym{font-size:25px;font-weight:900}
+.stock .trend{font-size:18px;font-weight:800;margin:14px 0 7px}
+.stock .expl{font-size:13px;color:var(--muted)}
+.stock .price{font-size:17px;margin-top:6px}
+.chatlog{height:340px;overflow:auto;border:1px solid var(--line);border-radius:13px;padding:16px;background:#091422}
+.bubble{margin:0 0 13px;max-width:90%;border-radius:13px;padding:12px 16px;font-size:16px;white-space:pre-wrap;line-height:1.5}
+.bubble.bot{background:#153045;border:1px solid #2a556a}
+.bubble.you{background:#244054;margin-left:auto}
+.chatbar{display:flex;gap:10px;margin-top:13px}
+.chatbar input{flex:1}
+.chatbar button{font-weight:800}
+.chatbar button:disabled{opacity:.4}
+.settings{display:none;background:#0e1b2b;border:1px solid #33506a;border-radius:16px;padding:19px;margin-top:20px}
+.settings.show{display:block}
+.settings .factor{margin-top:12px}
+.section-label{font-size:14px;color:var(--cyan);font-weight:900;letter-spacing:.12em;margin:22px 0 15px}
+footer{border-top:1px solid var(--line);padding-top:20px;margin-top:30px;font-size:13px;color:var(--muted)}
+.hid{display:none!important}
+@media(max-width:1100px){.span-3,.span-4{grid-column:span 6}.span-5,.span-7,.span-8{grid-column:span 12}.marketgrid{grid-template-columns:repeat(2,1fr)}.header-right{gap:8px}}
+@media(max-width:760px){.shell{padding:14px}.hero{grid-template-columns:1fr}.header{align-items:flex-start}.header-right{flex-wrap:wrap;justify-content:flex-end}.span-3,.span-4,.span-5,.span-6,.span-7,.span-8,.span-12{grid-column:span 12}.tabs{display:grid;grid-template-columns:repeat(3,1fr)}.tab{min-width:0}.panel{padding:18px}.statline{grid-template-columns:repeat(3,1fr)}.marketgrid{grid-template-columns:repeat(2,1fr)}.clock{font-size:72px}.factor{grid-template-columns:1fr}.chatbar{flex-wrap:wrap}.chatbar input{flex-basis:100%}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header class="header"><div class="brand">NEXER <em>COMMAND</em><small>HOME INTELLIGENCE · FIRE TV EDITION</small></div><div class="header-right"><span class="pulse"><span class="dot"></span> LIVE CONNECTIONS</span><span class="status" id="sync">Checking feeds...</span><button id="refresh" type="button">↻ Refresh</button></div></header>
+<nav class="tabs" aria-label="Dashboard sections">
+<button class="tab active" data-view="home">◈ OVERVIEW</button><button class="tab" data-view="danger">⚠ DANGERS</button><button class="tab" data-view="news">◉ NEWS</button><button class="tab" data-view="money">＄ SAVE MONEY</button><button class="tab" data-view="markets">⌁ STOCKS</button><button class="tab" data-view="assistant">✦ ASSISTANT</button>
+</nav>
+<div class="hero"><div class="clockbox"><div class="kicker">YOUR LIVE DAILY BRIEFING · <span id="locationTitle">HIALEAH GARDENS, FL</span></div><div class="clock" id="time">--:--</div><div class="dateline" id="date">Loading date...</div></div><div class="heroaside"><div class="tag" id="safetyTag">● CHECKING LOCAL ALERTS</div><div class="loud" id="safetyText">Connecting to official weather alerts</div><div class="sub" id="safetyDetail">National Weather Service · Weather data updates automatically. This page is not an emergency warning system.</div></div></div>
+<div class="alertbanner" id="criticalBanner" role="alert"></div>
+
+<main>
+<section class="view active" id="view-home">
+ <div class="grid">
+  <div class="panel span-7"><div class="panel-head"><h2>☀ LOCAL WEATHER</h2><span class="quality" id="weatherUpdated">Loading live data</span></div><div class="weather-row"><div><div class="big" id="temp">--°</div><div class="weather-line" id="condition">Checking weather...</div></div><div class="muted" id="feels">Feels like —</div></div><div class="statline"><div class="stat"><small>HUMIDITY</small><b id="humidity">--%</b></div><div class="stat"><small>WIND</small><b id="wind">-- mph</b></div><div class="stat"><small>RAIN CHANCE</small><b id="rain">--%</b></div></div><div class="forecast" id="forecast"><div>Forecast loading</div></div></div>
+  <div class="panel span-5"><div class="panel-head"><h2>⚠ LOCAL THREAT SCAN</h2><span class="tag" id="alertCount">CHECKING</span></div><div id="alertList" class="stack"><div class="muted">Checking local NWS warnings...</div></div><button class="action-link" data-go="danger">Open threat center →</button></div>
+  <div class="panel span-3"><div class="panel-head"><h3>🌫 AIR QUALITY</h3></div><div class="metric" id="aqi">—</div><div id="aqiDesc" class="muted">US AQI · loading</div><div class="footnote" id="pm25">PM2.5: —</div></div>
+  <div class="panel span-3"><div class="panel-head"><h3>🌎 EARTHQUAKE WATCH</h3></div><div class="metric" id="quakeMag">—</div><div id="quakeDesc" class="muted">USGS · past 24 hours</div><a class="action-link" target="_blank" rel="noopener" href="https://earthquake.usgs.gov/earthquakes/map/">Live map ↗</a></div>
+  <div class="panel span-3"><div class="panel-head"><h3>🌀 ATLANTIC STORMS</h3></div><div class="headline" id="stormTitle">Checking NOAA...</div><div class="muted" id="stormDesc">Official Atlantic hurricane updates</div><a class="action-link" href="https://www.nhc.noaa.gov/" target="_blank" rel="noopener">NOAA tracker ↗</a></div>
+  <div class="panel span-3"><div class="panel-head"><h3>☄ GLOBAL RISK CLOCK</h3></div><div class="metric" style="color:var(--gold)">85s</div><div class="muted">2026 Doomsday Clock setting · symbolic assessment, NOT a countdown</div><a class="action-link" href="https://thebulletin.org/doomsday-clock/" target="_blank" rel="noopener">What it means ↗</a></div>
+  <div class="panel span-8"><div class="panel-head"><h2>◉ WORLD & ECONOMY BRIEFING</h2><span class="quality" id="newsStamp">Latest published headlines</span></div><div id="homeNews"><div class="muted">Loading news sources...</div></div><button class="action-link" data-go="news">See every news topic →</button></div>
+  <div class="panel span-4"><div class="panel-head"><h2>＄ HOUSEHOLD SAVINGS</h2><span class="tag green">SAVE MORE</span></div><p>Check streaming costs, car insurance, electricity, gas prices, internet and changes to taxes or programs.</p><div class="tip"><b>Start with subscriptions</b>Unused streaming services are usually the quickest bills to review.</div><div class="tip"><b>Compare Florida gas prices</b>Use real station prices before driving out of the way.</div><button class="action-link" data-go="money">Open savings planner →</button></div>
+ </div>
+</section>
+
+<section class="view" id="view-danger">
+ <div class="section-label">OFFICIAL WARNINGS, NOT SOCIAL MEDIA RUMORS</div>
+ <div class="grid">
+  <div class="panel span-7"><div class="panel-head"><h2>⚠ NWS ACTIVE WARNINGS NEAR YOU</h2><span class="tag" id="dangerAlertStatus">UPDATING</span></div><div id="dangerAlerts" class="stack"><p>Checking...</p></div><div class="footnote">If the feed cannot be reached, no warning status can be confirmed. Follow local officials and Wireless Emergency Alerts.</div><a class="action-link" target="_blank" rel="noopener" href="https://www.weather.gov/alerts">Official NWS alerts ↗</a></div>
+  <div class="panel span-5"><div class="panel-head"><h2>🌀 HURRICANE / TROPICAL STORM</h2></div><div class="headline" id="stormDetail">Loading NOAA Atlantic updates...</div><div id="stormSub" class="muted"></div><a class="action-link" href="https://www.nhc.noaa.gov/gtwo.php?basin=atlc" target="_blank" rel="noopener">Atlantic outlook ↗</a></div>
+  <div class="panel span-4"><h2>🌊 TSUNAMI ALERTS</h2><p class="muted">A tsunami threat must come from the official warning centers. A major earthquake somewhere does not automatically mean a tsunami for Florida.</p><div class="headline" id="tsunamiStatus">Checking local alerts...</div><a class="action-link" href="https://www.tsunami.gov/" target="_blank" rel="noopener">U.S. Tsunami Warning Centers ↗</a></div>
+  <div class="panel span-4"><h2>🌪 TORNADO / SEVERE WEATHER</h2><div class="headline" id="tornadoStatus">Checking warnings...</div><p class="muted">Tornado warnings require immediate attention. A forecast alone is not a warning.</p><a class="action-link" href="https://www.spc.noaa.gov/" target="_blank" rel="noopener">Storm Prediction Center ↗</a></div>
+  <div class="panel span-4"><h2>☀ SPACE WEATHER</h2><div class="headline" id="solarStatus">NOAA solar activity</div><p class="muted">Geomagnetic storms can affect satellites, radio, and some power systems. They are not a prediction of an apocalypse.</p><a class="action-link" href="https://www.swpc.noaa.gov/" target="_blank" rel="noopener">NOAA space weather ↗</a></div>
+  <div class="panel span-12"><h2>🌍 GLOBAL EARTHQUAKES</h2><p class="muted">Recent worldwide earthquakes from the U.S. Geological Survey.</p><div id="quakeList" class="stack">Loading...</div></div>
+ </div>
+</section>
+
+<section class="view" id="view-news">
+ <div class="panel"><div class="panel-head"><h2>◉ LIVE INTELLIGENCE NEWS DESK</h2><span class="quality" id="feedStatus">Searchable recent headlines</span></div><div class="buttons" id="topics">
+ <button class="pill active" data-topic="world">World relations</button><button class="pill" data-topic="oil">Oil & Trump policy</button><button class="pill" data-topic="economy">Economy & inflation</button><button class="pill" data-topic="tax">Taxes & benefits</button><button class="pill" data-topic="health">Viruses & CDC</button><button class="pill" data-topic="danger">Danger & disasters</button><button class="pill" data-topic="tech">AI & technology</button><button class="pill" data-topic="subscription">Streaming deals</button><button class="pill" data-topic="market">Stocks & business</button>
+ </div><div id="newsList" style="margin-top:20px"><div class="muted">Choose a topic to fetch recent news.</div></div><div class="source-list" style="margin-top:20px"><a href="https://apnews.com/" target="_blank" rel="noopener">AP News ↗</a><a href="https://www.reuters.com/" target="_blank" rel="noopener">Reuters ↗</a><a href="https://www.cdc.gov/outbreaks/" target="_blank" rel="noopener">CDC Outbreaks ↗</a><a href="https://www.eia.gov/" target="_blank" rel="noopener">U.S. Energy Information ↗</a><a href="https://www.bls.gov/news.release/cpi.toc.htm" target="_blank" rel="noopener">Official inflation ↗</a></div><p class="footnote">Headlines link to their publishers. News search may fail or be delayed. Dates are shown when provided; no story is treated as verified just because it appears in a feed.</p></div>
+</section>
+
+<section class="view" id="view-money">
+ <div class="grid">
+  <div class="panel span-7"><div class="panel-head"><h2>＄ MONTHLY BILL CUT CALCULATOR</h2><span class="tag green">ESTIMATE ONLY</span></div><p class="muted">Enter your family's monthly spending. These example reductions are possible targets, not guaranteed discounts or actual bills.</p>
+  <div class="factor" id="billFields">
+   <div class="field"><label for="bill-stream">Streaming & subscriptions per month ($)</label><input id="bill-stream" data-bill="stream" type="number" min="0" placeholder="e.g. 90"></div>
+   <div class="field"><label for="bill-power">Electric bill per month ($)</label><input id="bill-power" data-bill="power" type="number" min="0" placeholder="e.g. 180"></div>
+   <div class="field"><label for="bill-auto">Car insurance per month ($)</label><input id="bill-auto" data-bill="auto" type="number" min="0" placeholder="e.g. 240"></div>
+   <div class="field"><label for="bill-net">Phone & internet per month ($)</label><input id="bill-net" data-bill="net" type="number" min="0" placeholder="e.g. 150"></div>
+   <div class="field"><label for="bill-gas">Gasoline per month ($)</label><input id="bill-gas" data-bill="gas" type="number" min="0" placeholder="e.g. 120"></div>
+   <div class="field"><label for="bill-other">Other shopping per month ($)</label><input id="bill-other" data-bill="other" type="number" min="0" placeholder="e.g. 200"></div>
+  </div></div>
+  <div class="panel span-5"><h2>POSSIBLE MONTHLY SAVINGS</h2><div class="saving-total" id="saveMonth">$0</div><p class="muted">Illustrative reductions applied to the amounts you enter</p><div class="line-item"><div class="row"><span>Estimated savings per year</span><strong id="saveYear">$0</strong></div></div><div class="line-item"><div class="row"><span>Total monthly costs entered</span><strong id="billTotal">$0</strong></div></div><div class="line-item" id="savingBreakdown">Add bills to see your estimates.</div><p class="footnote">Example targets: streaming 30%, electric 10%, insurance 15%, phone/internet 15%, gas 8%, other shopping 5%. Real savings may be zero. Values are saved only in this browser.</p><button id="clearBills">Clear bill amounts</button></div>
+  <div class="panel span-12"><div class="panel-head"><h2>📉 SPECIFIC WAYS TO LOWER COSTS</h2><span class="tag">FLORIDA RESOURCES</span></div><div class="grid">
+    <div class="span-4"><div class="tip"><b>⛽ Compare gasoline near home</b>Check GasBuddy or AAA. Calculate whether a lower pump price is worth the drive.</div><a class="action-link" href="https://www.gasbuddy.com/gasprices/florida/hialeah" target="_blank" rel="noopener">Hialeah gas prices ↗</a></div>
+    <div class="span-4"><div class="tip"><b>⚡ Electric bill</b>Check FPL plans, energy usage, and assistance programs. A rate change must be verified on your actual bill.</div><a class="action-link" href="https://www.fpl.com/save.html" target="_blank" rel="noopener">FPL savings ↗</a></div>
+    <div class="span-4"><div class="tip"><b>🚘 Auto insurance</b>Compare renewal quotes and deductibles for the same coverage. Avoid cancelling required insurance.</div><a class="action-link" href="https://floir.com/" target="_blank" rel="noopener">Florida insurance regulator ↗</a></div>
+    <div class="span-4"><div class="tip"><b>📺 Cancel unused subscriptions</b>Review Prime Video, Hulu, Disney+, Peacock, Max and add-ons. Track who uses each service before cancelling.</div><a class="action-link" href="https://www.usa.gov/consumer-complaints" target="_blank" rel="noopener">Consumer help ↗</a></div>
+    <div class="span-4"><div class="tip"><b>🧾 Taxes and rebates</b>Watch IRS notices and Florida Department of Revenue announcements. News of a proposal is not a tax cut.</div><a class="action-link" href="https://floridarevenue.com/" target="_blank" rel="noopener">Florida tax updates ↗</a></div>
+    <div class="span-4"><div class="tip"><b>🏠 Eligible assistance</b>Benefits depend on household eligibility. Check official programs before sharing financial or medical information.</div><a class="action-link" href="https://www.benefits.gov/" target="_blank" rel="noopener">Benefit programs ↗</a></div>
+   </div></div>
+ </div>
+</section>
+
+<section class="view" id="view-markets">
+ <div class="panel"><div class="panel-head"><h2>⌁ LONG-TERM STOCK RESEARCH RADAR</h2><span class="tag yellow">HISTORICAL DATA ONLY</span></div><p>Compare 1-year trends, 50/200-day moving averages, 3-month return and RSI. A <b>BUY WATCH</b> means the formula looks strong historically, not that you should buy. <b>SELL / AVOID</b> means the trend looks weak, not a guaranteed forecast. News and policy changes should be checked separately.</p><div class="marketgrid" id="stockGrid"></div><div class="row" style="margin-top:20px;flex-wrap:wrap"><div style="display:flex;gap:8px;flex:1;max-width:500px"><input id="stockInput" placeholder="Symbol e.g. AAPL" maxlength="10" aria-label="Stock ticker"><button id="addStock">Analyze</button></div><button id="reloadStocks">↻ Reload market data</button></div><p class="footnote" id="marketInfo">Live historical data uses an unofficial Yahoo Finance endpoint through third-party public CORS proxies, which may fail. No price or recommendation is shown if the data cannot be verified. Research only, not investment advice.</p></div>
+ <div class="grid" style="margin-top:18px">
+  <div class="panel span-6"><h2>🛢 ENERGY / OIL WATCH</h2><p>Watch companies such as XOM, CVX and OXY and compare them with oil prices, sanctions, production decisions and earnings. A political headline does not guarantee any stock rises.</p><a class="action-link" href="https://www.eia.gov/petroleum/" target="_blank" rel="noopener">U.S. oil data ↗</a><button class="action-link" data-news="oil">Oil policy headlines →</button></div>
+  <div class="panel span-6"><h2>📈 HOW THIS RATING IS MADE</h2><p>+1 price above 200-day average; +1 50-day above 200-day; +1 price higher than 3 months ago; +1 RSI 40–70; +1 positive 12-month performance. At least 200 real trading-day prices are required.</p><p class="footnote">Scores: 4–5 BUY WATCH, 2–3 HOLD / REVIEW, 0–1 SELL / AVOID. This simple model does not use valuation, balance sheets or future news and is not a tested profitable system.</p></div>
+ </div>
+</section>
+
+<section class="view" id="view-assistant">
+ <div class="grid"><div class="panel span-8"><div class="panel-head"><h2>✦ NEXER AI ASSISTANT</h2><span class="tag" id="aiState">LOCAL ANSWERS</span></div><div id="chatLog" class="chatlog" aria-live="polite"><div class="bubble bot">Hey. Ask me about local weather, hurricanes, dangers, ways to cut household bills, stock research, news, or the time. I can use data already loaded on this dashboard. For open-ended AI answers, connect an AI provider in Settings.</div></div><div class="chatbar"><input id="ask" placeholder="Ask anything about your dashboard..." aria-label="Ask the assistant"><button id="send">Send</button><button id="mic" title="Browser microphone">🎤 Talk</button></div><div class="buttons" style="margin-top:12px"><button class="pill prompt" data-prompt="Are there active warnings near me?">Weather warnings?</button><button class="pill prompt" data-prompt="How can we lower our family bills?">Lower our bills</button><button class="pill prompt" data-prompt="What should I check before buying oil stocks?">Oil stocks</button><button class="pill prompt" data-prompt="What's the latest world news?">World news</button></div><p class="footnote">The Fire TV Alexa remote button is controlled by Amazon and cannot be captured by an ordinary website. The Talk button works only if your browser supports speech recognition and microphone permission. Fire TV Silk may not support this feature.</p></div>
+ <div class="panel span-4"><h2>⚙ ASSISTANT SETTINGS</h2><p class="muted">Local answers require no login. You can optionally connect a compatible AI chat API for broader conversations.</p><button id="toggleSettings">Configure AI ↕</button><div class="settings" id="aiSettings"><label for="aiUrl">HTTPS API base URL</label><input id="aiUrl" placeholder="https://openrouter.ai/api/v1"><label for="aiModel" style="display:block;margin-top:10px">Model ID</label><input id="aiModel" placeholder="provider/model-name"><label for="aiKey" style="display:block;margin-top:10px">API key (kept in memory only)</label><input id="aiKey" type="password" autocomplete="off" placeholder="Paste your key on your own device"><div class="buttons" style="margin-top:14px"><button id="saveAI">Use this API</button><button id="disconnectAI">Disconnect</button></div><p class="footnote">Never use someone else's key. API calls may cost money and send your messages to the provider. Do not put a secret in a public GitHub file. Local HTTP endpoints are usually blocked from this HTTPS page.</p></div><div class="tip"><b>Try these voice requests</b>"What is the humidity?" or "Are there tornado warnings?"</div><div class="tip"><b>TV controls</b>Use the Fire TV remote navigation buttons and Select. You can also open this page on a phone or computer.</div></div></div>
+</section>
+</main>
+<footer><div class="row" style="flex-wrap:wrap"><div>Built for TV · Uses public data from Open-Meteo, NWS, NOAA, USGS, GDELT and publishers. Not an emergency alert system or financial adviser.</div><button id="changePlace">⌖ Change city</button></div><p id="sourceFoot">Location defaults to Hialeah Gardens, Florida. You may change it without sharing a precise street address.</p></footer>
+</div>
+<script>
+(function(){
+'use strict';
+var $=function(id){return document.getElementById(id);};
+var cfg={place:'Hialeah Gardens, FL',lat:25.865,lon:-80.324};
+try{var s=JSON.parse(localStorage.getItem('nexer_place')||'null');if(s&&typeof s.lat==='number'&&typeof s.lon==='number')cfg=s;}catch(e){}
+var app={weather:null,alerts:null,news:{},topic:'world',stocks:{},quakes:[],ai:null,marketLoaded:false,storm:null};
+var topics={
+world:{q:'"foreign policy" OR "international relations" OR diplomacy',rss:'US foreign relations diplomacy world news'},
+oil:{q:'"oil prices" OR "energy policy" OR "oil sanctions"',rss:'Trump oil energy policy prices sanctions'},
+economy:{q:'"US economy" OR inflation OR "Federal Reserve"',rss:'US inflation economy Federal Reserve'},
+tax:{q:'"tax cuts" OR "Florida taxes" OR "IRS refund"',rss:'Florida taxes IRS tax cuts benefits'},
+health:{q:'"disease outbreak" OR "CDC warning" OR "new virus"',rss:'CDC disease outbreak virus health'},
+danger:{q:'hurricane OR tornado OR tsunami OR earthquake',rss:'hurricanes tornado tsunami earthquake disaster'},
+tech:{q:'"artificial intelligence" OR "AI breakthrough"',rss:'artificial intelligence technology breakthroughs'},
+subscription:{q:'"streaming subscription" OR "subscription prices" OR "internet discount"',rss:'streaming subscription price change discounts'},
+market:{q:'"stock market" OR "earnings" OR "Wall Street"',rss:'stock market business earnings'}
+};
+var symbols=['SPY','VOO','QQQ','XOM','CVX','OXY','MSFT','NVDA'];
+var description={SPY:'S&P 500 ETF',VOO:'S&P 500 long-term ETF',QQQ:'Nasdaq-100 ETF',XOM:'ExxonMobil / oil',CVX:'Chevron / oil',OXY:'Occidental / oil',MSFT:'Microsoft / technology',NVDA:'NVIDIA / AI chips'};
+var dollars=function(n){return '$'+Math.round(n).toLocaleString('en-US');};
+var safe=function(s){return String(s||'').replace(/<[^>]*>/g,'').slice(0,350);};
+function node(tag,cls,txt){var el=document.createElement(tag);if(cls)el.className=cls;if(txt!=null)el.textContent=txt;return el;}
+function link(url,txt){var a=node('a','',txt);a.href=url&&/^https:\/\//i.test(url)?url:'https://news.google.com/';a.target='_blank';a.rel='noopener noreferrer';return a;}
+function updateClock(){var d=new Date();$('time').textContent=d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});$('date').textContent=d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});$('locationTitle').textContent=cfg.place.toUpperCase();}
+updateClock();setInterval(updateClock,1000);
+function show(view){document.querySelectorAll('.view').forEach(function(x){x.classList.toggle('active',x.id==='view-'+view);});document.querySelectorAll('.tab').forEach(function(x){x.classList.toggle('active',x.dataset.view===view);});if(view==='news')loadNews(app.topic);if(view==='markets'&&!app.marketLoaded){app.marketLoaded=true;loadStocks();}window.scrollTo(0,0);}
+document.querySelectorAll('[data-view]').forEach(function(b){b.addEventListener('click',function(){show(b.dataset.view);});});
+document.querySelectorAll('[data-go]').forEach(function(b){b.addEventListener('click',function(){show(b.dataset.go);});});
+document.querySelectorAll('[data-news]').forEach(function(b){b.addEventListener('click',function(){app.topic=b.dataset.news;show('news');});});
+document.querySelectorAll('[data-topic]').forEach(function(b){b.addEventListener('click',function(){app.topic=b.dataset.topic;document.querySelectorAll('[data-topic]').forEach(function(t){t.classList.toggle('active',t.dataset.topic===app.topic);});loadNews(app.topic);});});
+function fetchJSON(url,ms){return new Promise(function(resolve,reject){var c=new AbortController(),t=setTimeout(function(){c.abort();},ms||10000);fetch(url,{signal:c.signal,headers:{'Accept':'application/json'}}).then(function(r){if(!r.ok)throw Error('HTTP '+r.status);return r.json();}).then(function(j){clearTimeout(t);resolve(j);}).catch(function(e){clearTimeout(t);reject(e);});});}
+function weatherName(c){var n=Number(c);if(n===0)return 'Clear skies';if(n<=3)return 'Partly cloudy';if(n<=48)return 'Cloudy / fog';if(n<=67)return 'Rain expected';if(n<=77)return 'Snow conditions';if(n<=82)return 'Rain showers';if(n>=95)return 'Thunderstorms possible';return 'Changing conditions';}
+async function loadWeather(){
+ try{
+ var url='https://api.open-meteo.com/v1/forecast?latitude='+cfg.lat+'&longitude='+cfg.lon+'&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code&hourly=precipitation_probability&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=4';
+ var j=await fetchJSON(url,15000);if(!j.current)throw Error('No weather data');
+ app.weather=j;var c=j.current;$('temp').textContent=Math.round(c.temperature_2m)+'°';$('condition').textContent=weatherName(c.weather_code);$('feels').textContent='Feels like '+Math.round(c.apparent_temperature)+'°F';$('humidity').textContent=c.relative_humidity_2m+'%';$('wind').textContent=Math.round(c.wind_speed_10m)+' mph';$('rain').textContent=((j.daily&&j.daily.precipitation_probability_max||[])[0]??'--')+'%';
+ $('weatherUpdated').textContent='Updated '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+ var f=$('forecast');f.replaceChildren();if(j.daily)j.daily.time.forEach(function(day,i){var d=node('div');d.appendChild(node('div','',new Date(day+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'})));d.appendChild(node('strong','',Math.round(j.daily.temperature_2m_max[i])+'°'));d.appendChild(node('small','',Math.round(j.daily.temperature_2m_min[i])+'° low'));f.appendChild(d);});
+ }catch(e){$('condition').textContent='Weather unavailable';$('weatherUpdated').textContent='Connection failed';$('forecast').textContent='Live weather feed could not load. Check your internet connection.';}
+}
+async function loadAir(){
+ try{var j=await fetchJSON('https://air-quality-api.open-meteo.com/v1/air-quality?latitude='+cfg.lat+'&longitude='+cfg.lon+'&current=us_aqi,pm2_5&timezone=auto',12000);var n=j.current&&j.current.us_aqi;if(n==null)throw Error('Missing AQI');$('aqi').textContent=n;$('aqiDesc').textContent=n<=50?'Good air quality':n<=100?'Moderate air quality':n<=150?'Unhealthy for sensitive groups':n<=200?'Unhealthy':n<=300?'Very unhealthy':'Hazardous';$('pm25').textContent='PM2.5: '+j.current.pm2_5+' µg/m³ · Open-Meteo';}catch(e){$('aqi').textContent='—';$('aqiDesc').textContent='Air quality data unavailable';}
+}
+function renderAlerts(arr){
+ var count=arr.length;$('alertCount').textContent=count?count+' ALERT'+(count!==1?'S':''):'NO ACTIVE ITEMS FOUND';$('dangerAlertStatus').textContent=count?count+' ALERTS':'NONE RETURNED';var dests=[$('alertList'),$('dangerAlerts')];dests.forEach(function(target){target.replaceChildren();if(!count){target.appendChild(node('p','muted','No active NWS alerts returned for this location. This is not a guarantee of safety.'));return;}arr.slice(0,12).forEach(function(o){var p=o.properties||{};var box=node('div','line-item');var title=node('strong','',p.event||'Weather alert');title.style.color=(p.severity==='Extreme'||p.severity==='Severe')?'#ff999c':'#f9ca78';box.appendChild(title);box.appendChild(node('div','muted',(p.headline||p.description||'Check official alert.').slice(0,270)));if(p.id)box.appendChild(link(p.id,'Read official alert ↗'));target.appendChild(box);});});
+ var relevant=arr.map(function(x){return String(x.properties&&x.properties.event||'').toLowerCase();});
+ var tornado=relevant.filter(function(t){return /tornado/.test(t);}).length;
+ var tsunami=relevant.filter(function(t){return /tsunami/.test(t);}).length;
+ $('tornadoStatus').textContent=tornado?tornado+' local tornado alert(s)':'No local tornado alert returned';
+ $('tsunamiStatus').textContent=tsunami?tsunami+' local tsunami alert(s)':'No local tsunami alert returned';
+ var severe=arr.some(function(x){var p=x.properties||{};return p.severity==='Extreme'||p.severity==='Severe';});
+ $('safetyTag').className='tag '+(severe?'red':count?'yellow':'green');
+ $('safetyTag').textContent=severe?'● URGENT NWS ALERT':count?'● NWS ADVISORY / WATCH':'● NO ACTIVE NWS ITEMS RETURNED';
+ $('safetyText').textContent=severe?'Check official local warnings now':count?'Review active weather notifications':'No active local NWS items returned';
+ $('safetyDetail').textContent='Checked '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+' · NWS alert feed. Keep Wireless Emergency Alerts enabled.';
+ var banner=$('criticalBanner');banner.classList.toggle('show',severe);
+ banner.textContent=severe?'URGENT: Severe or extreme NWS alert returned for your area. Open the DANGERS section and follow official instructions.':'';
+ app.alerts=arr;
+}
+async function loadAlerts(){
+ try{var j=await fetchJSON('https://api.weather.gov/alerts/active?point='+cfg.lat+','+cfg.lon,15000);renderAlerts(Array.isArray(j.features)?j.features:[]);}catch(e){app.alerts=null;$('safetyTag').className='tag yellow';$('safetyTag').textContent='● ALERT STATUS UNKNOWN';$('safetyText').textContent='Official alert feed unavailable';$('safetyDetail').textContent='Check weather.gov or local emergency officials directly.';$('alertCount').textContent='NOT VERIFIED';$('dangerAlertStatus').textContent='UNAVAILABLE';$('alertList').textContent='Alert feed unavailable. Do not assume there are no warnings.';$('dangerAlerts').textContent='Could not reach official NWS alert data. Open weather.gov/alerts.';$('tornadoStatus').textContent='Not verified';$('tsunamiStatus').textContent='Not verified';}
+}
+async function loadQuakes(){
+ try{var j=await fetchJSON('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson',12000);var a=(j.features||[]).sort(function(x,y){return (y.properties.mag||0)-(x.properties.mag||0);}).slice(0,6);app.quakes=a;if(!a.length){$('quakeMag').textContent='—';$('quakeDesc').textContent='No M4.5+ events returned';}else{$('quakeMag').textContent='M'+Number(a[0].properties.mag).toFixed(1);$('quakeDesc').textContent=safe(a[0].properties.place).slice(0,65);}
+ var box=$('quakeList');box.replaceChildren();if(!a.length)box.textContent='No earthquakes over magnitude 4.5 in this feed.';a.forEach(function(x){var p=x.properties;var d=node('div','line-item');var aLink=link(p.url||'https://earthquake.usgs.gov/','M'+Number(p.mag).toFixed(1)+' · '+safe(p.place));aLink.style.fontWeight='800';d.appendChild(aLink);d.appendChild(node('small','',new Date(p.time).toLocaleString()));box.appendChild(d);});
+ }catch(e){$('quakeDesc').textContent='USGS feed unavailable';$('quakeList').textContent='Earthquake data unavailable right now.';}
+}
+async function getRSS(url){var prox='https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(url);var j=await fetchJSON(prox,12000);if(j.status!=='ok'||!Array.isArray(j.items))throw Error('RSS feed unavailable');return j.items;}
+async function loadStorm(){
+ try{var list=await getRSS('https://www.nhc.noaa.gov/index-at.xml');var latest=list.filter(function(x){return x.title&&!/image|graphic/i.test(x.title);}).slice(0,3);if(!latest.length)throw Error('No advisories in RSS');app.storm=latest;
+ $('stormTitle').textContent=safe(latest[0].title).slice(0,65);$('stormDesc').textContent='Latest NOAA/NHC RSS item';$('stormDetail').textContent=safe(latest[0].title);$('stormSub').textContent=safe(latest[0].description).slice(0,380);
+ }catch(e){$('stormTitle').textContent='NOAA feed offline';$('stormDesc').textContent='Open NOAA for current storm status';$('stormDetail').textContent='Could not verify current Atlantic storms';$('stormSub').textContent='Use the official National Hurricane Center link to see active storms and outlooks.';}
+}
+async function loadSpace(){try{var data=await fetchJSON('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json',12000);var recent=data[data.length-1];if(!recent)throw Error('No data');$('solarStatus').textContent='Planetary K-index: '+recent[1];}catch(e){$('solarStatus').textContent='Live space weather unavailable';}}
+function normalizeGDELT(j){return (j.articles||[]).slice(0,12).map(function(x){var t=x.seendate||'';var date=/^\d{8}T\d{6}Z/.test(t)?new Date(t.substring(0,4)+'-'+t.substring(4,6)+'-'+t.substring(6,8)+'T'+t.substring(9,11)+':'+t.substring(11,13)+':00Z'):null;return {title:x.title,url:x.url,source:x.domain||'Publisher',date:date,summary:''};});}
+function normalizeRSS(j){return j.slice(0,12).map(function(x){return {title:x.title,url:x.link,source:x.author||'News publisher',date:x.pubDate?new Date(x.pubDate):null,summary:''};});}
+async function getNews(key){
+ var t=topics[key],p='https://api.gdeltproject.org/api/v2/doc/doc?query='+encodeURIComponent(t.q)+'&mode=artlist&maxrecords=12&format=json&timespan=3d&sort=datedesc';
+ try{var j=await fetchJSON(p,11500);var a=normalizeGDELT(j);if(a.length)return a;}catch(e){}
+ try{var rss='https://news.google.com/rss/search?q='+encodeURIComponent(t.rss+' when:3d')+'&hl=en-US&gl=US&ceid=US:en';var r=await getRSS(rss);var b=normalizeRSS(r);if(b.length)return b;}catch(e){}
+ throw Error('Both news sources unavailable');
+}
+function renderNews(target,articles,limit){target.replaceChildren();if(!articles||!articles.length){target.textContent='No recent stories received.';return;}articles.slice(0,limit||10).forEach(function(o){var box=node('article','newsrow'),a=link(o.url,'');a.appendChild(node('strong','',safe(o.title)));box.appendChild(a);box.appendChild(node('small','',(safe(o.source)||'News source')+' · '+(o.date&&!isNaN(o.date)?o.date.toLocaleString():'Date not supplied')));target.appendChild(box);});}
+async function loadNews(key){
+ if(!topics[key])key='world';app.topic=key;$('feedStatus').textContent='Checking headlines...';
+ var target=$('newsList');target.textContent='Loading newest '+key+' headlines...';
+ try{var items=await getNews(key);app.news[key]=items;renderNews(target,items,12);$('feedStatus').textContent=items.length+' recent stories · '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});if(key==='world')renderNews($('homeNews'),items,4);
+ }catch(e){target.replaceChildren();target.appendChild(node('p','muted','Automatic headlines unavailable. Open Google News directly to see current reporting.'));target.appendChild(link('https://news.google.com/search?q='+encodeURIComponent(topics[key].rss),'Open '+key+' news ↗'));$('feedStatus').textContent='Feed unavailable';if(key==='world'){$('homeNews').replaceChildren(node('p','muted','News feed unavailable. Use the direct news link below.'),link('https://news.google.com/','Google News ↗'));}}
+}
+async function loadHomeNews(){try{var items=await getNews('world');app.news.world=items;renderNews($('homeNews'),items,4);$('newsStamp').textContent='Recently seen stories';}catch(e){$('homeNews').replaceChildren(node('p','muted','Headlines unavailable in this browser.'),link('https://news.google.com/','Google News ↗'));$('newsStamp').textContent='Feed not connected';}}
+var reductions={stream:.30,power:.10,auto:.15,net:.15,gas:.08,other:.05};
+function calcBills(){
+ var monthly=0,total=0,parts=[];
+ document.querySelectorAll('[data-bill]').forEach(function(el){var n=Math.max(0,Number(el.value)||0),pct=reductions[el.dataset.bill];total+=n;monthly+=n*pct;if(n>0)parts.push(el.dataset.bill+': '+dollars(n*pct)+'/mo');});
+ $('saveMonth').textContent=dollars(monthly);$('saveYear').textContent=dollars(monthly*12);$('billTotal').textContent=dollars(total);$('savingBreakdown').textContent=parts.length?parts.join(' · '):'Add bills to see your estimates.';
+ var store={};document.querySelectorAll('[data-bill]').forEach(function(el){store[el.dataset.bill]=el.value;});try{localStorage.setItem('nexer_bills',JSON.stringify(store));}catch(e){}
+}
+try{var savedBills=JSON.parse(localStorage.getItem('nexer_bills')||'{}');document.querySelectorAll('[data-bill]').forEach(function(el){el.value=savedBills[el.dataset.bill]||'';});}catch(e){}
+document.querySelectorAll('[data-bill]').forEach(function(el){el.addEventListener('input',calcBills);});calcBills();
+$('clearBills').addEventListener('click',function(){document.querySelectorAll('[data-bill]').forEach(function(el){el.value='';});calcBills();});
+function mean(a,n){if(a.length<n)return null;var sum=0;for(var i=a.length-n;i<a.length;i++)sum+=a[i];return sum/n;}
+function rsi(a,n){if(a.length<n+1)return null;var up=0,down=0;for(var i=a.length-n;i<a.length;i++){var d=a[i]-a[i-1];if(d>0)up+=d;else down-=d;}if(!down)return 100;return 100-100/(1+up/down);}
+function rating(prices){
+ if(prices.length<201)return null;
+ var p=prices[prices.length-1],s50=mean(prices,50),s200=mean(prices,200),r=rsi(prices,14),p3=prices[Math.max(0,prices.length-64)],p12=prices[0];var changes=(p/p3-1)*100,year=(p/p12-1)*100;
+ var factors=[p>s200,s50>s200,changes>0,r>=40&&r<=70,year>0];var score=factors.filter(Boolean).length;
+ return {price:p,score:score,rsi:r,change:changes,year:year,signal:score>=4?'BUY WATCH':score<=1?'SELL / AVOID':'HOLD / REVIEW',factors:factors,days:prices.length};
+}
+async function getStock(symbol){
+ var origin='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(symbol)+'?range=1y&interval=1d';
+ var proxies=['https://corsproxy.io/?url='+encodeURIComponent(origin),'https://api.allorigins.win/raw?url='+encodeURIComponent(origin)];
+ var last;for(var k=0;k<proxies.length;k++){try{var j=await fetchJSON(proxies[k],11000),r=j.chart&&j.chart.result&&j.chart.result[0];if(!r)throw Error('Missing chart');
+ var closes=r.indicators.quote[0].close.filter(function(v){return typeof v==='number'&&isFinite(v);});
+ if(closes.length<201)throw Error('Less than 200 daily closes');return rating(closes);
+ }catch(e){last=e;}}
+ throw last||Error('Unavailable');
+}
+function stockCard(sym){var old=$('stock-'+sym);if(old)return old;var el=node('div','stock');el.id='stock-'+sym;el.appendChild(node('div','sym',sym));el.appendChild(node('div','muted',description[sym]||'Watchlist stock'));el.appendChild(node('div','trend','Waiting for data'));el.appendChild(node('div','price',''));el.appendChild(node('div','expl','Historical analysis pending'));var btn=link('https://www.tradingview.com/symbols/'+encodeURIComponent(sym)+'/','View chart ↗');btn.className='action-link';el.appendChild(btn);$('stockGrid').appendChild(el);return el;}
+async function updateStock(sym){
+ var card=stockCard(sym),trend=card.querySelector('.trend'),price=card.querySelector('.price'),expl=card.querySelector('.expl');trend.textContent='Checking history...';
+ try{var result=await getStock(sym);app.stocks[sym]=result;trend.textContent=result.signal+' · '+result.score+'/5';trend.style.color=result.score>=4?'#62e3b2':result.score<=1?'#ff999c':'#f9ca78';price.textContent='$'+result.price.toFixed(2)+' · 3-mo '+(result.change>0?'+':'')+result.change.toFixed(1)+'%';expl.textContent=result.days+' closes · RSI '+Math.round(result.rsi)+' · 12-mo '+(result.year>0?'+':'')+result.year.toFixed(1)+'%';
+ }catch(e){app.stocks[sym]=null;trend.textContent='DATA UNAVAILABLE';trend.style.color='#f9ca78';price.textContent='No price displayed';expl.textContent='Open chart for verified market history.';}
+}
+async function loadStocks(){symbols.forEach(stockCard);for(var i=0;i<symbols.length;i+=3){await Promise.all(symbols.slice(i,i+3).map(updateStock));}$('marketInfo').textContent='Historical research refreshed '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+'. Data may be delayed or blocked. Ratings only appear when at least 200 daily closes load.';}
+$('reloadStocks').addEventListener('click',loadStocks);
+$('addStock').addEventListener('click',function(){var s=$('stockInput').value.trim().toUpperCase().replace(/[^A-Z0-9.-]/g,'');if(!s||s.length>10)return;if(symbols.indexOf(s)<0)symbols.push(s);$('stockInput').value='';updateStock(s);});
+$('stockInput').addEventListener('keydown',function(e){if(e.key==='Enter')$('addStock').click();});
+function addChat(who,msg){var b=node('div','bubble '+(who==='you'?'you':'bot'),msg);$('chatLog').appendChild(b);$('chatLog').scrollTop=$('chatLog').scrollHeight;}
+function answerLocal(raw){
+ var q=raw.toLowerCase();
+ if(/(time|clock|date|today.*day)/.test(q))return 'It is '+new Date().toLocaleString()+' on this device.';
+ if(/(humidity|temperature|hot|cold|weather|forecast|rain)/.test(q)&&!/hurricane|tornado|warning|alert/.test(q)){if(!app.weather)return 'Weather is not connected right now. Open the Weather panel or official weather.gov.';var w=app.weather.current;return 'In '+cfg.place+': '+Math.round(w.temperature_2m)+'°F, feels like '+Math.round(w.apparent_temperature)+'°F, humidity '+w.relative_humidity_2m+'%, wind '+Math.round(w.wind_speed_10m)+' mph. Forecast: '+weatherName(w.weather_code)+'.';}
+ if(/(hurricane|tsunami|tornado|earthquake|warning|alert|danger|storm)/.test(q)){if(app.alerts===null)return 'I cannot verify current local warnings because the official NWS feed is unavailable. Please check weather.gov/alerts and nhc.noaa.gov directly.';return 'The NWS feed currently returned '+app.alerts.length+' active local weather items for '+cfg.place+'. '+(app.alerts.length?'Check the DANGERS tab to read each official warning.':'This does not guarantee that no danger exists. Keep emergency alerts enabled.')+' Hurricane details: nhc.noaa.gov. Tsunami warnings: tsunami.gov.';}
+ if(/(bill|save|cheap|cost|money|subscription|insurance|electric|gasoline|gas station|tax)/.test(q)){return 'I would start by checking unused subscriptions, comparing car insurance at renewal, and looking at FPL electricity usage. Your current calculator shows possible savings of '+$('saveMonth').textContent+' per month, based on example reductions, not guaranteed results. Check GasBuddy for nearby pump prices and floridarevenue.com for tax changes.';}
+ if(/(stock|invest|buy|sell|trading|oil|xom|cvx|oxy|sp500|etf)/.test(q)){var ready=Object.keys(app.stocks).filter(function(s){return app.stocks[s];}).map(function(s){return s+' '+app.stocks[s].signal+' ('+app.stocks[s].score+'/5)';});return 'I can compare historical trends but cannot predict future prices. '+(ready.length?'Current loaded ratings: '+ready.slice(0,8).join(', ')+'.':'Open STOCKS to try loading 1 year of price data.')+' For oil, check production news, earnings, oil prices, and risks before investing. No headline guarantees a return.';}
+ if(/(doomsday|world war|nuclear|midnight)/.test(q))return 'The Doomsday Clock was set to 85 seconds to midnight in January 2026. It is a symbolic warning from the Bulletin of the Atomic Scientists, not a real timer or a prediction that disaster will happen in 85 seconds.';
+ if(/(news|politic|foreign|economy|inflation|virus|cdc|health)/.test(q)){var stories=app.news[app.topic]||app.news.world||[];return stories.length?'One recently retrieved headline: '+safe(stories[0].title)+'. Open NEWS for the article and publication details.':'News feed is unavailable. Try Google News, AP, Reuters, or the CDC directly.';}
+ return 'I can answer questions about weather, alerts, saving money, stock history and your news dashboard. For open-ended conversations, choose Configure AI and add a compatible AI provider. What would you like to know?';
+}
+$('toggleSettings').addEventListener('click',function(){$('aiSettings').classList.toggle('show');});
+$('saveAI').addEventListener('click',function(){var url=$('aiUrl').value.trim().replace(/\/$/,'');var model=$('aiModel').value.trim(),key=$('aiKey').value.trim();if(!/^https:\/\//i.test(url)||!model||!key){addChat('bot','Enter a valid HTTPS API URL, model ID and API key. Nothing has been connected.');return;}app.ai={url:url,model:model,key:key};$('aiState').textContent='EXTERNAL AI SET';addChat('bot','AI provider configured for this tab only. Your messages will be sent to that provider, which may charge for API use.');});
+$('disconnectAI').addEventListener('click',function(){app.ai=null;$('aiKey').value='';$('aiState').textContent='LOCAL ANSWERS';addChat('bot','Disconnected. I will answer using local dashboard information.');});
+async function sendChat(){var msg=$('ask').value.trim();if(!msg)return;$('ask').value='';addChat('you',msg);if(!app.ai){addChat('bot',answerLocal(msg));return;}
+ $('aiState').textContent='AI THINKING...';
+ try{var api=app.ai;var context='You are NEXER, a concise useful TV home dashboard assistant. Current location is '+cfg.place+'. Weather: '+(app.weather?JSON.stringify(app.weather.current):'unavailable')+'. NWS alerts: '+(app.alerts===null?'unavailable':app.alerts.length+' returned')+'. Money estimate: '+$('saveMonth').textContent+'/mo illustrative only. Stock ratings: '+Object.keys(app.stocks).filter(function(s){return app.stocks[s];}).map(function(s){return s+' '+app.stocks[s].signal+' '+app.stocks[s].score+'/5'}).join(', ')+'. Explain uncertainty. Never invent alerts, current news, prices, or financial recommendations. Avoid unnecessary length.';
+ var response=await fetch(api.url+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+api.key},body:JSON.stringify({model:api.model,messages:[{role:'system',content:context},{role:'user',content:msg}],temperature:0.4})});
+ if(!response.ok)throw Error('API returned '+response.status);var data=await response.json();var answer=data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content;if(typeof answer!=='string')throw Error('No text response');addChat('bot',answer);
+ }catch(e){addChat('bot','The external AI connection failed: '+e.message+'. Check your URL, model, API key, provider billing and CORS settings.');}
+ $('aiState').textContent='EXTERNAL AI SET';
+}
+$('send').addEventListener('click',sendChat);$('ask').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();sendChat();}});
+document.querySelectorAll('.prompt').forEach(function(b){b.addEventListener('click',function(){$('ask').value=b.dataset.prompt;sendChat();});});
+var Recognizer=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(!Recognizer){$('mic').disabled=true;$('mic').title='Speech recognition is not supported by this browser';}
+else $('mic').addEventListener('click',function(){try{var rec=new Recognizer();rec.lang='en-US';rec.interimResults=false;rec.onresult=function(e){$('ask').value=e.results[0][0].transcript;sendChat();};rec.onerror=function(e){addChat('bot','Microphone error: '+e.error+'. Try typing instead.');};rec.start();$('mic').textContent='Listening…';rec.onend=function(){$('mic').textContent='🎤 Talk';};}catch(e){addChat('bot','Microphone is not available here. Please type your question.');}});
+$('changePlace').addEventListener('click',async function(){var name=prompt('Enter a city name (example: Hialeah Gardens, FL). No street address needed.',cfg.place);if(!name||!name.trim())return;try{var j=await fetchJSON('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(name.trim())+'&count=5&language=en&format=json',12000);if(!j.results||!j.results.length)throw Error('No matching city found');var found=j.results[0];cfg={place:found.name+', '+(found.admin1||found.country_code),lat:found.latitude,lon:found.longitude};localStorage.setItem('nexer_place',JSON.stringify(cfg));updateClock();$('safetyText').textContent='Checking new location...';loadWeather();loadAir();loadAlerts();}catch(e){alert('Could not find this city. Try a shorter name.');}});
+function reload(){ $('sync').textContent='Refreshing sources...';Promise.allSettled([loadWeather(),loadAir(),loadAlerts(),loadQuakes(),loadStorm(),loadSpace(),loadHomeNews()]).then(function(){$('sync').textContent='Last checked '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});});}
+$('refresh').addEventListener('click',function(){reload();if($('view-news').classList.contains('active'))loadNews(app.topic);if($('view-markets').classList.contains('active'))loadStocks();});
+reload();setInterval(function(){loadWeather();loadAir();loadAlerts();},5*60*1000);setInterval(function(){loadQuakes();loadStorm();loadSpace();loadHomeNews();},15*60*1000);
+})();
+</script>
+</body></html>
